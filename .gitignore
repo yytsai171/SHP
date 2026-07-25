@@ -1,0 +1,31 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Generated results and figures (reproducible from data/ + scripts/;
+# not committed so the repo stays small -- see README.md "Running
+# Experiments" to regenerate)
+results/*.csv
+results/*.pkl
+results/*.txt
+figures/*.png
+figures/*.pdf
+
+# Keep the directories themselves under version control
+!results/.gitkeep
+!figures/.gitkeep
+
+# OS/editor cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Jupyter, if used for exploratory analysis
+.ipynb_checkpoints/

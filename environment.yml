@@ -1,0 +1,14 @@
+name: cold-user-active-learning
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy=1.26.4
+  - pandas=3.0.1
+  - scipy=1.17.1
+  - scikit-learn=1.8.0
+  - matplotlib=3.10.8
+  - pip:
+      - scikit-surprise==1.1.4
