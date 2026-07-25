@@ -2,12 +2,11 @@
 measure_update_cost.py
 ========================
 Empirical (not just asymptotic) measurement of the partial-update
-efficiency claim underlying the whole personalised-strategy pipeline
-(thesis Section 3.7.1, "Motivation and Efficiency Gain"): one full SVD
-retrain on the warm-user trainset (what a naive personalised-strategy
-implementation would do after every single revealed cold-user
-interaction) vs. one partial-SGD update restricted to the four
-parameters actually touched by that interaction
+efficiency claim underlying the whole personalised-strategy pipeline:
+one full SVD retrain on the warm-user trainset (what a naive
+personalised-strategy implementation would do after every single
+revealed cold-user interaction) vs. one partial-SGD update restricted
+to the four parameters actually touched by that interaction
 (`personalised_strategies.py`'s `_partial_lfm_update_cold`).
 
 Uses the already-cached warm data and tuned hyperparameters
@@ -76,9 +75,8 @@ def main() -> None:
           f"{warm_trainset.n_users:,} users, {warm_trainset.n_items:,} items", flush=True)
 
     # ── Cost 1: one full SVD retrain from scratch ──
-    # (what a naive implementation would do after EVERY single revealed
-    # cold-user interaction, across the full 140,873-user cold
-    # population -- the cost this thesis's partial update avoids.)
+    # (what a naive implementation would do after every single revealed
+    # cold-user interaction -- the cost the partial update avoids.)
     retrain_times = []
     for trial in range(N_RETRAIN_TRIALS):
         svd = SVD(n_factors=best_params['n_factors'], reg_all=best_params['reg_all'],
@@ -92,10 +90,9 @@ def main() -> None:
     mean_retrain = float(np.mean(retrain_times))
 
     # ── Cost 2: one partial-SGD update ──
-    # Restricted to (p_u^c, b_u^c, q_i, b_i) -- exactly the four
-    # quantities thesis Section 3.7.1 argues are the only ones that need
-    # to change per interaction. Timed over many repetitions since a
-    # single call is too fast to measure reliably against timer
+    # Restricted to (p_u^c, b_u^c, q_i, b_i) -- the only four quantities
+    # that need to change per interaction. Timed over many repetitions
+    # since a single call is too fast to measure reliably against timer
     # resolution/Python call overhead.
     n_factors = svd_base.pu.shape[1]
     i_inner = 0
@@ -108,10 +105,9 @@ def main() -> None:
     def partial_update(
         pu_cold: np.ndarray, bu_cold: float, qi: np.ndarray, bi: float, r_ui: float
     ) -> Tuple[np.ndarray, float, np.ndarray, float]:
-        """One partial-SGD update step (thesis Eq. 3.9-3.10), identical
-        arithmetic to ``personalised_strategies.py``'s
-        ``_partial_lfm_update_cold`` with ``num_sgd_steps=1`` and no
-        learning-rate decay."""
+        """One partial-SGD update step, identical arithmetic to
+        ``personalised_strategies.py``'s ``_partial_lfm_update_cold``
+        with ``num_sgd_steps=1`` and no learning-rate decay."""
         pred = mu + bu_cold + bi + np.dot(pu_cold, qi)
         error = r_ui - pred
         bu_cold_new = bu_cold + GAMMA1 * (error - LMBDA1 * bu_cold)

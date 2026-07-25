@@ -10,21 +10,10 @@ Runs the complete experimental pipeline end-to-end, in one command:
     3. personalised_strategies.py    -- SHHCP / SHLCP / SHMCP / SHECP,
                                          all corrections applied,
                                          1,000 users x 4 k-values
-    4. significance_test.py +
-       ranking_significance_and_correction.py
-                                      -- paired Wilcoxon tests + Holm/BH
-                                         multiple-comparisons correction
 
-Each stage is a separate, independently runnable script (see
-README.md "Running Experiments" for how to run any one of them in
-isolation, e.g. to re-run only the baselines). This script simply
-calls them in the right order and stops early if any stage fails or
-setup hasn't been run yet.
-
-This corresponds to STEPS 1, 2, 3, 5, and 6 of the numbered sequence
-in README.md "Running Experiments" (STEP 4, the optional
-hyperparameter ablations, and STEP 7, the plotting scripts, are not
-part of this pipeline -- run them separately if needed).
+Each stage is a separate, independently runnable script -- this one
+simply calls them in the right order and stops early if any stage
+fails or setup hasn't been run yet.
 
 Usage
 -----
@@ -36,17 +25,16 @@ Expected runtime
                                           skipped if
                                           results/base_model_cache.pkl
                                           already exists)
-    Baselines (baseline_ranking_metrics.py): ~8 minutes
+    Baselines (baseline_ranking_metrics.py): ~30 minutes (each of
+                                          Random/Popularity/PopError
+                                          averaged over 30 independent
+                                          draws; see baseline_ranking_
+                                          metrics.py's module docstring)
     Personalised (personalised_strategies.py): ~80-85 minutes
                                           (1,000 users x 4 strategies
                                           x 4 k-values = 16,000 work
                                           items, 10 workers)
-    Significance (significance_test.py +
-                  ranking_significance_and_correction.py): ~32 minutes
-    Total: ~2-2.5 hours on a modern multi-core machine.
-
-See README.md "Reproducibility" for hardware/OS details and exact
-runtimes measured during thesis preparation.
+    Total: ~1.8-2.3 hours on a modern multi-core machine.
 """
 
 from __future__ import annotations
@@ -58,12 +46,10 @@ import sys
 from typing import List
 
 SCRIPT_DIR: str = os.path.dirname(os.path.abspath(__file__))
-EXPERIMENTS_DIR: str = os.path.join(SCRIPT_DIR, '..', 'experiments')
 RESULTS_DIR: str = os.path.join(SCRIPT_DIR, '..', '..', 'results')
 MODEL_CACHE: str = os.path.join(RESULTS_DIR, 'base_model_cache.pkl')
 
-# Full-scale evaluation parameters -- must match README.md "Configuration"
-# and the values used to produce the thesis's Chapter 4 results.
+# Full-scale evaluation parameters.
 FULL_STRATEGIES: List[str] = ['SHHCP', 'SHLCP', 'SHMCP', 'SHECP']
 FULL_K_VALUES: List[int] = [10, 25, 50, 100]
 FULL_NUM_USERS: int = 1000
@@ -84,9 +70,7 @@ def run_script(name: str, directory: str = SCRIPT_DIR) -> None:
     name : str
         Filename of the script to run.
     directory : str, default this file's own directory (scripts/model/)
-        Directory the script lives in -- pass ``EXPERIMENTS_DIR`` for
-        significance_test.py / ranking_significance_and_correction.py,
-        which live in scripts/experiments/.
+        Directory the script lives in.
 
     Raises
     ------
@@ -101,15 +85,14 @@ def run_script(name: str, directory: str = SCRIPT_DIR) -> None:
 
 
 def main() -> None:
-    """Runs all four pipeline stages in sequence.
+    """Runs all three pipeline stages in sequence.
 
     Stage 3 (the personalised strategies) is the one stage NOT run via
     ``run_script`` -- personalised_strategies.py's own ``__main__``
-    only runs a 20-user smoke test (a deliberate, fast correctness
-    check before committing to the ~80-minute full run; see
-    personalised_strategies.py's module docstring), so this function
-    imports that module directly and calls the same smoke-test-then-
-    full-run sequence in-process, saving the result itself.
+    only runs a 20-user smoke test (a fast correctness check before
+    committing to the ~80-minute full run), so this function imports
+    that module directly and calls the same smoke-test-then-full-run
+    sequence in-process, saving the result itself.
     """
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -147,17 +130,10 @@ def main() -> None:
     df_full.to_csv(pers.OUT_FINAL, index=False)
     print(f"Saved to {pers.OUT_FINAL}", flush=True)
 
-    run_script('significance_test.py', directory=EXPERIMENTS_DIR)
-    run_script('ranking_significance_and_correction.py', directory=EXPERIMENTS_DIR)
-
     print(f"\n{'='*70}\nPIPELINE COMPLETE.\n{'='*70}", flush=True)
     print("Results written to:", flush=True)
     print(f"  {os.path.join(RESULTS_DIR, 'baseline_results.csv')}", flush=True)
     print(f"  {os.path.join(RESULTS_DIR, 'personalised_results.csv')}", flush=True)
-    print(f"  {os.path.join(RESULTS_DIR, 'significance_results.csv')}", flush=True)
-    print(f"  {os.path.join(RESULTS_DIR, 'ranking_significance_results.csv')}", flush=True)
-    print("\nSee README.md 'Reproducing Thesis Results' for which script "
-          "produces which table/figure.", flush=True)
 
 
 if __name__ == '__main__':

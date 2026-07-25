@@ -24,14 +24,6 @@ Output
 ------
     results/b_ablation_results.csv
         Columns: strategy, B, val_rmse, n_users, seconds
-
-Complexity
-----------
-O(|STRATEGIES| * |B_GRID| * 200 * 50) partial-SGD updates (each O(F));
-item selection is O(|eligible_items|) per round, dict-based rather than
-vectorised -- acceptable at this 200-user, single-process scale (see
-README.md "Methodology" for why SECTION 3's parallel evaluation uses a
-vectorised version instead).
 """
 
 from __future__ import annotations
@@ -60,7 +52,8 @@ STRATEGIES: List[str] = ['SHHCP', 'SHLCP', 'SHMCP', 'SHECP']
 
 def _stable_seed(u: int, shown: List[Any]) -> int:
     """Deterministic replacement for Python's built-in ``hash()`` on
-    strings -- see README.md "Reproducibility".
+    strings, which is randomised per-process unless PYTHONHASHSEED is
+    fixed.
     """
     key = f"{int(u)}|" + ','.join(sorted(str(x) for x in shown))
     return int(hashlib.md5(key.encode()).hexdigest(), 16) % (2**32)
@@ -86,7 +79,8 @@ def main() -> None:
     n_factors        = cache['n_factors']
     cold_users       = cache['cold_users']
     GAMMA1, GAMMA2   = cache['GAMMA1'], cache['GAMMA2']
-    LMBDA1, LMBDA2   = cache['LMBDA1'], cache['LMBDA2']
+    # Final re-tuned regularisation, matching personalised_strategies.py.
+    LMBDA1, LMBDA2   = 1e-5, 1e-4
 
     print(f"[{time.time()-t_start:6.1f}s] Cache loaded (setup skipped).", flush=True)
 
@@ -113,7 +107,7 @@ def main() -> None:
         lmbda1: float = 1e-7, lmbda2: float = 1e-6, num_sgd_steps: int = 1
     ) -> Tuple[np.ndarray, float]:
         """One (or num_sgd_steps) partial-SGD update(s) given a
-        newly-observed interaction (thesis Eq. 3.9-3.10)."""
+        newly-observed interaction."""
         if i_inner not in local_qi:
             local_qi[i_inner] = svd_model.qi[i_inner].copy()
             local_bi[i_inner] = float(svd_model.bi[i_inner])
@@ -138,8 +132,7 @@ def main() -> None:
         egreedy_rng_local: Optional[np.random.RandomState] = None
     ) -> List[Any]:
         """Selects the next batch of items under ``strategy`` (all four
-        strategies supported; dict-based, non-vectorised -- see
-        README.md "Methodology" for the selection rules)."""
+        strategies supported)."""
         mu        = svd_model.trainset.global_mean
         shown_set = set(shown)
         scores    = {}
@@ -187,9 +180,10 @@ def main() -> None:
         shown    = [most_popular_iid]
 
         first_row = data[(data['user_idx'] == u) & (data['itemId'] == most_popular_iid)]
-        r_first   = float(first_row['interaction'].iloc[0]) if len(first_row) > 0 else 0.0
+        has_first = len(first_row) > 0
+        r_first   = float(first_row['interaction'].iloc[0]) if has_first else 0.0
 
-        if i_0_inner is not None:
+        if i_0_inner is not None and has_first:
             pu_cold, bu_cold = partial_lfm_update_cold(
                 svd_base, pu_cold, bu_cold, i_0_inner, r_first,
                 local_qi, local_bi,
@@ -211,9 +205,10 @@ def main() -> None:
             shown.extend(batch)
             for next_item in batch:
                 row   = data[(data['user_idx'] == u) & (data['itemId'] == next_item)]
-                r_ui  = float(row['interaction'].iloc[0]) if len(row) > 0 else 0.0
+                has_row = len(row) > 0
+                r_ui  = float(row['interaction'].iloc[0]) if has_row else 0.0
                 i_inner = item_to_iidx.get(next_item)
-                if i_inner is not None:
+                if i_inner is not None and has_row:
                     pu_cold, bu_cold = partial_lfm_update_cold(
                         svd_base, pu_cold, bu_cold, i_inner, r_ui,
                         local_qi, local_bi,

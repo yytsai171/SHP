@@ -2,8 +2,7 @@
 make_thesis_figures.py
 ========================
 Generates the two main comparison figures from the pipeline's result
-CSVs (see README.md "Reproducing Thesis Results" -> Figure 4.1,
-Figure 4.3).
+CSVs.
 
 Figure 1 (fig_rmse_vs_baselines): RMSE of the four personalised
 strategies vs. the non-personalised baseline range, across the four

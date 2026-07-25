@@ -38,11 +38,6 @@ Output
     results/decaying_lr_test_results.csv
         Columns: k, mode ('fixed'/'decaying'), val_rmse, n_users, seconds
 
-Complexity
-----------
-O(|K_VALUES| * |MODES| * 200 * k) partial-SGD updates (each O(F)) plus
-O(|eligible_items|) scoring per active-learning round -- see thesis
-Section 3.7.1 for the per-update cost argument.
 """
 
 from __future__ import annotations
@@ -70,7 +65,8 @@ MODES: List[Tuple[str, bool]] = [('fixed', False), ('decaying', True)]
 
 def _stable_seed(u: int, shown: List[Any]) -> int:
     """Deterministic replacement for Python's built-in ``hash()`` on
-    strings -- see README.md "Reproducibility".
+    strings, which is randomised per-process unless PYTHONHASHSEED is
+    fixed.
 
     Parameters
     ----------
@@ -108,7 +104,8 @@ def main() -> None:
     n_factors        = cache['n_factors']
     cold_users       = cache['cold_users']
     GAMMA1, GAMMA2   = cache['GAMMA1'], cache['GAMMA2']
-    LMBDA1, LMBDA2   = cache['LMBDA1'], cache['LMBDA2']
+    # Final re-tuned regularisation, matching personalised_strategies.py.
+    LMBDA1, LMBDA2   = 1e-5, 1e-4
 
     print(f"[{time.time()-t_start:6.1f}s] Cache loaded (setup skipped).", flush=True)
 
@@ -134,12 +131,9 @@ def main() -> None:
         local_qi: Dict[int, np.ndarray], local_bi: Dict[int, float],
         gamma1: float, gamma2: float, lmbda1: float, lmbda2: float
     ) -> Tuple[np.ndarray, float]:
-        """One partial-SGD update given a newly-observed interaction
-        (thesis Eq. 3.9-3.10). Identical update rule to
-        personalised_strategies.py's ``_partial_lfm_update_cold`` with
-        ``num_sgd_steps=1``, except ``gamma1``/``gamma2`` are already
-        pre-scaled by the caller (``gammas_for``) before being passed in
-        here, rather than scaled internally by an ``update_index``."""
+        """One partial-SGD update given a newly-observed interaction.
+        ``gamma1``/``gamma2`` are already pre-scaled by the caller
+        (``gammas_for``) before being passed in here."""
         if i_inner not in local_qi:
             local_qi[i_inner] = svd_model.qi[i_inner].copy()
             local_bi[i_inner] = float(svd_model.bi[i_inner])
@@ -202,17 +196,17 @@ def main() -> None:
 
         def gammas_for(n: int) -> Tuple[float, float]:
             """Returns (gamma1, gamma2) for update index n: unscaled if
-            not decaying, else scaled by 1/sqrt(1+n) (thesis
-            gamma_eff(n) schedule)."""
+            not decaying, else scaled by 1/sqrt(1+n)."""
             if not decaying:
                 return GAMMA1, GAMMA2
             decay = 1.0 / np.sqrt(1.0 + n)
             return GAMMA1 * decay, GAMMA2 * decay
 
         first_row = data[(data['user_idx'] == u) & (data['itemId'] == most_popular_iid)]
-        r_first   = float(first_row['interaction'].iloc[0]) if len(first_row) > 0 else 0.0
+        has_first = len(first_row) > 0
+        r_first   = float(first_row['interaction'].iloc[0]) if has_first else 0.0
 
-        if i_0_inner is not None:
+        if i_0_inner is not None and has_first:
             g1, g2 = gammas_for(n)
             pu_cold, bu_cold = partial_lfm_update_cold(
                 svd_base, pu_cold, bu_cold, i_0_inner, r_first, local_qi, local_bi,
@@ -228,9 +222,10 @@ def main() -> None:
             shown.extend(batch)
             for next_item in batch:
                 row   = data[(data['user_idx'] == u) & (data['itemId'] == next_item)]
-                r_ui  = float(row['interaction'].iloc[0]) if len(row) > 0 else 0.0
+                has_row = len(row) > 0
+                r_ui  = float(row['interaction'].iloc[0]) if has_row else 0.0
                 i_inner = item_to_iidx.get(next_item)
-                if i_inner is not None:
+                if i_inner is not None and has_row:
                     g1, g2 = gammas_for(n)
                     pu_cold, bu_cold = partial_lfm_update_cold(
                         svd_base, pu_cold, bu_cold, i_inner, r_ui, local_qi, local_bi,

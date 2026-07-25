@@ -3,34 +3,26 @@ build_model_cache.py
 =====================
 Setup script for the cold-user active-learning pipeline.
 
-Loads the raw interaction dataset, partitions users into cold/warm
-subsets, tunes the PopError mixing coefficient (ALPHA), runs the
-leakage-free warm-user-only hyperparameter search for the base biased-SVD
-model, trains that model, and saves everything downstream scripts need
-to ``results/base_model_cache.pkl``.
+Loads the raw interaction dataset, splits users into cold/warm
+subsets, tunes the PopError mixing coefficient (ALPHA), runs a
+warm-user-only hyperparameter search for the base biased-SVD model,
+trains that model, and saves everything downstream scripts need to
+``results/base_model_cache.pkl``.
 
 Why this script exists
 -----------------------
-None of the downstream scripts (the four personalised strategies, the
-three non-personalised baselines, every ablation) need to redo the
-expensive setup phase -- 5-fold cross-validated grid search over 9
-``(n_factors, reg_all)`` configurations on ~1.9M warm-user interaction
-rows. They all load this cache instead, turning a ~20-minute setup into
-a sub-second pickle load.
+None of the downstream scripts (the personalised strategies, the
+non-personalised baselines, the ablations) need to redo the expensive
+setup phase -- a 5-fold cross-validated grid search over 9
+(n_factors, reg_all) configurations on ~1.9M warm-user interaction
+rows. They all load this cache instead, turning a ~20-minute setup
+into a sub-second pickle load.
 
 Reproducibility
 ----------------
-Deterministic given the fixed seeds (``random.seed(1)``,
-``np.random.seed(1)``, ``GridSearchCV(..., n_jobs=1)``); re-running this
-script reproduces the identical base model every time on the same
-machine/library versions (see README.md "Reproducibility").
-
-Thesis reference
-------------------
-Corresponds to thesis Section 3.3 (Experimental Setup: the cold/warm
-split), Section 3.4 (item eligibility), and the "Leakage-free warm-user
-cross-validation" paragraph of Section 3.8 (Evaluation Metrics and
-Hyperparameter Tuning).
+Deterministic given the fixed seeds; re-running this script reproduces
+the identical base model every time on the same machine/library
+versions.
 
 Usage
 -----
@@ -40,7 +32,6 @@ Input
 -----
     data/useritemmatrix.csv
         Columns: userId, itemId, interaction (binary 0/1).
-        See README.md "Dataset".
 
 Output
 ------
@@ -53,8 +44,7 @@ Output
 Runtime
 -------
     ~20-25 minutes on a single CPU core (GridSearchCV runs with
-    n_jobs=1 deliberately, to keep the search itself reproducible --
-    see README.md "Reproducibility").
+    n_jobs=1 deliberately, to keep the search itself reproducible).
 """
 
 from __future__ import annotations
@@ -76,30 +66,27 @@ RESULTS_DIR: str = os.path.join(SCRIPT_DIR, '..', '..', 'results')
 MODEL_CACHE: str = os.path.join(RESULTS_DIR, 'base_model_cache.pkl')
 
 # Fraction of users withheld as "cold" (never seen during base-model
-# training). Fixed at 0.25 following Geurts et al. (2020); not tuned --
-# see thesis Chapter 5, Limitation 7.
+# training).
 COLD_USER_FRACTION: float = 0.25
 
 # Minimum warm-user interaction count for an item to be "eligible"
-# (shown to cold users / used as a candidate). Thesis Section 3.3.
+# (shown to cold users / used as a candidate).
 MIN_ITEM_INTERACTIONS: int = 10
 
-# PopError alpha search grid and validation-sample size. Thesis Table 3.5.
+# PopError alpha search grid and validation-sample size.
 ALPHA_GRID: List[float] = [0.5, 0.7, 0.9]
 N_ALPHA_VAL: int = 200
 
-# Number of sampled negatives per positive item in the HR@K evaluation
-# used only for the ALPHA search here (He et al., 2017 methodology;
-# thesis Section 3.9 "Evaluation Metrics").
+# Number of sampled negatives per positive item, used for the ALPHA
+# search (He et al., 2017 methodology).
 N_NEG: int = 99
 
-# Base-model hyperparameter grid (thesis Table 3.6). n_epochs is fixed
-# at 50 following Geurts et al. (2020); only n_factors and reg_all vary.
-# random_state is fixed so every candidate model's internal (pu, qi, bu,
-# bi) initialisation is seeded -- Surprise's SVD falls back to NumPy's
-# *global* RNG when random_state is left at its default (None), which
-# would otherwise make GridSearchCV's winner non-reproducible across
-# runs regardless of n_jobs (see README.md "Reproducibility").
+# Base-model hyperparameter grid. n_epochs is fixed; only n_factors and
+# reg_all vary. random_state is fixed so every candidate model's
+# internal initialisation is seeded -- Surprise's SVD falls back to
+# NumPy's global RNG when random_state is left at its default (None),
+# which would otherwise make GridSearchCV's winner non-reproducible
+# across runs.
 SVD_PARAM_GRID: Dict[str, List[Any]] = {
     'n_factors': [50, 100, 200],
     'reg_all': [1e-7, 1e-6, 1e-4],
@@ -108,9 +95,8 @@ SVD_PARAM_GRID: Dict[str, List[Any]] = {
     'random_state': [1],
 }
 
-# Cold-user incremental-update hyperparameters (thesis Eq. 3.9-3.10).
-# Not tuned by this script -- see decaying_lr_test.py, shrinkage_test.py,
-# regularization_ablation.py for the ablations that inform these values.
+# Cold-user incremental-update hyperparameters. LMBDA1/LMBDA2 here are
+# overridden by personalised_strategies.py's own re-tuned constants.
 GAMMA1: float = 0.005  # learning rate, bias update
 GAMMA2: float = 0.005  # learning rate, factor-vector update
 LMBDA1: float = 1e-7   # L2 regularisation, bias update
@@ -155,15 +141,8 @@ def load_and_split_data(data_path: str, cold_fraction: float,
     most_popular_iid : Any
         The single most-interacted-with eligible item (raw itemId),
         used as every cold user's first shown item.
-
-    Notes
-    -----
-    Runtime is O(n) in the number of interaction rows for the groupby/
-    category-code operations. Corresponds to thesis Section 3.3
-    (cold/warm split) and Section 3.4 (item eligibility).
     """
     data = pd.read_csv(data_path)
-    data = data.groupby('userId').filter(lambda x: len(x) > 0)
     data['user_idx'] = data['userId'].astype('category').cat.codes
     data['item_idx'] = data['itemId'].astype('category').cat.codes
 
@@ -188,8 +167,7 @@ def compute_misclassification_error_scores(
     MisclassError(i) = 1 - max(P(like | i), P(dislike | i)), i.e. how
     close the item's warm-user interaction rate is to 50/50 (maximum
     ambiguity) versus lopsidedly positive or negative (low ambiguity).
-    Used as the ambiguity component of the PopError score
-    (thesis Eq. 3.3).
+    Used as the ambiguity component of the PopError score.
 
     Parameters
     ----------
@@ -204,11 +182,6 @@ def compute_misclassification_error_scores(
     dict
         Mapping from raw itemId to its misclassification-error score
         in [0, 0.5].
-
-    Complexity
-    ----------
-    O(n) in the number of warm-user interaction rows for the groupby,
-    then O(|eligible_items|) for the per-item score computation.
     """
     item_mean_interaction = warm_data.groupby('itemId')['interaction'].mean()
     error_scores: Dict[Any, float] = {}
@@ -251,11 +224,9 @@ def learn_alpha(warm_data: pd.DataFrame, item_counts: pd.Series,
                  rng: np.random.RandomState) -> tuple[float, float]:
     """Selects PopError's mixing coefficient ALPHA by HR@10 on warm users.
 
-    PopError(i) = alpha * log10(freq(i)) + (1 - alpha) * MisclassError(i)
-    (thesis Eq. 3.2). ALPHA is evaluated by HR@10 rather than RMSE
-    because it governs which items PopError *selects*, not a predicted
-    rating -- see README.md "Methodology" for the full justification
-    (thesis Section 3.8, "Search space" paragraph).
+    PopError(i) = alpha * log10(freq(i)) + (1 - alpha) * MisclassError(i).
+    ALPHA is evaluated by HR@10 rather than RMSE because it governs
+    which items PopError selects, not a predicted rating.
 
     Parameters
     ----------
@@ -283,10 +254,6 @@ def learn_alpha(warm_data: pd.DataFrame, item_counts: pd.Series,
         The ALPHA_GRID value achieving the highest mean HR@10.
     best_alpha_hr : float
         That value's mean HR@10.
-
-    Complexity
-    ----------
-    O(|alpha_grid| * n_val_users * n_neg) predicted-score comparisons.
     """
     eligible_set = set(eligible_items)
     warm_users_all = warm_data['user_idx'].unique()
@@ -343,14 +310,12 @@ def learn_alpha(warm_data: pd.DataFrame, item_counts: pd.Series,
 def tune_and_train_base_model(
     warm_data: pd.DataFrame, param_grid: Dict[str, List[Any]]
 ) -> tuple[Dict[str, Any], SVD]:
-    """Runs leakage-free warm-user-only GridSearchCV, then trains the
-    final base biased-SVD model with the winning configuration on the
-    full warm-user set.
+    """Runs warm-user-only GridSearchCV, then trains the final base
+    biased-SVD model with the winning configuration on the full
+    warm-user set.
 
-    Leakage-free protocol: the 5-fold cross-validation is run
-    exclusively on warm-user data, so cold-user behaviour never
-    influences hyperparameter selection (thesis Section 3.8,
-    "Leakage-free warm-user cross-validation").
+    The 5-fold cross-validation is run exclusively on warm-user data,
+    so cold-user behaviour never influences hyperparameter selection.
 
     Parameters
     ----------
@@ -367,12 +332,6 @@ def tune_and_train_base_model(
     svd_base : surprise.SVD
         The trained base model, fit on all warm-user data with
         ``best_params``.
-
-    Complexity
-    ----------
-    GridSearchCV: O(|param_grid| * cv_folds) SVD training runs, each
-    O(n_factors * n_interactions * n_epochs). Run with n_jobs=1
-    (sequential) for reproducibility -- see README.md "Reproducibility".
 
     Notes
     -----
@@ -455,15 +414,14 @@ def main() -> None:
     ``np.random.RandomState(1)`` rather than the legacy global
     ``np.random.seed(1)`` + module-level ``np.random.choice`` pattern --
     both draw from an identically-seeded Mersenne Twister as the very
-    first draw of the stream, so this produces byte-identical output to
-    the original implementation while making the RNG dependency explicit
-    (see README.md "Reproducibility").
+    first draw of the stream, so this produces the same output while
+    making the RNG dependency explicit.
     """
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     t_start = time.time()
 
-    # ---- 1. Data loading and cold/warm split (thesis Section 3.3) ----
+    # ---- 1. Data loading and cold/warm split ----
     split_rng = np.random.RandomState(1)
     data, cold_users, warm_data, item_counts, eligible_items, most_popular_iid = \
         load_and_split_data(DATA_PATH, COLD_USER_FRACTION, MIN_ITEM_INTERACTIONS,
@@ -472,10 +430,10 @@ def main() -> None:
           f"Cold users: {len(cold_users):,}  Eligible items: {len(eligible_items):,}",
           flush=True)
 
-    # ---- 2. Misclassification-error scores (thesis Eq. 3.3) ----
+    # ---- 2. Misclassification-error scores ----
     error_scores = compute_misclassification_error_scores(warm_data, eligible_items)
 
-    # ---- 3. Learn ALPHA (thesis Table 3.5) ----
+    # ---- 3. Learn ALPHA ----
     alpha_val_rng = np.random.RandomState(99)
     ALPHA, best_alpha_hr = learn_alpha(
         warm_data, item_counts, eligible_items, error_scores,
@@ -484,7 +442,7 @@ def main() -> None:
     print(f"[{time.time()-t_start:6.1f}s] ALPHA learned: {ALPHA} (HR@10={best_alpha_hr:.4f})",
           flush=True)
 
-    # ---- 4-5. Hyperparameter tuning + base model training (thesis Table 3.6) ----
+    # ---- 4-5. Hyperparameter tuning + base model training ----
     best_params, svd_base = tune_and_train_base_model(warm_data, SVD_PARAM_GRID)
     n_factors = svd_base.pu.shape[1]
     mu_base = float(svd_base.trainset.global_mean)

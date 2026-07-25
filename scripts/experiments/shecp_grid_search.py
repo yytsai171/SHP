@@ -9,7 +9,7 @@ Deliberately sequential (not parallelised across users): a single
 epsilon-greedy RNG stream is shared and continuously advanced across
 all users for a given (floor, decay) cell, so that changing the number
 of parallel workers can never change which random draws a given user
-receives -- see README.md "Reproducibility".
+receives.
 
 Uses the validation half of each user's remaining unseen items
 (disjoint from the test half used for final reporting in
@@ -51,9 +51,8 @@ MODEL_CACHE: str = os.path.join(RESULTS_DIR, 'base_model_cache.pkl')
 OUT_CSV: str = os.path.join(RESULTS_DIR, 'shecp_grid_results.csv')
 
 BATCH_SIZE: int = 3
-# Number of partial-SGD steps per interaction; 1 is the confirmed
-# winner from decaying_lr_test.py / thesis Table 3.7 -- fixed here
-# rather than swept, since this grid search targets floor/decay only.
+# Number of partial-SGD steps per interaction; fixed at 1 here since
+# this grid search targets floor/decay only.
 NUM_SGD_STEPS: int = 1
 FLOOR_GRID: List[float] = [0.05, 0.1, 0.2]
 DECAY_GRID: List[float] = [0.8, 0.9, 0.95]
@@ -61,7 +60,8 @@ DECAY_GRID: List[float] = [0.8, 0.9, 0.95]
 
 def _stable_seed(u: int, shown: List[Any]) -> int:
     """Deterministic replacement for Python's built-in ``hash()`` on
-    strings -- see README.md "Reproducibility"."""
+    strings, which is randomised per-process unless PYTHONHASHSEED is
+    fixed."""
     key = f"{int(u)}|" + ','.join(sorted(str(x) for x in shown))
     return int(hashlib.md5(key.encode()).hexdigest(), 16) % (2**32)
 
@@ -85,7 +85,8 @@ def main() -> None:
     n_factors = cache['n_factors']
     cold_users = cache['cold_users']
     GAMMA1, GAMMA2 = cache['GAMMA1'], cache['GAMMA2']
-    LMBDA1, LMBDA2 = cache['LMBDA1'], cache['LMBDA2']
+    # Final re-tuned regularisation, matching personalised_strategies.py.
+    LMBDA1, LMBDA2 = 1e-5, 1e-4
 
     eval_cold_users = cold_users[:min(1000, len(cold_users))]
     egreedy_rng = np.random.RandomState(123)
@@ -107,9 +108,9 @@ def main() -> None:
         local_qi: Dict[int, np.ndarray], local_bi: Dict[int, float]
     ) -> Tuple[np.ndarray, float]:
         """One partial-SGD update, using the base model's fixed
-        GAMMA1/GAMMA2/LMBDA1/LMBDA2 (thesis Eq. 3.9-3.10; no decaying
-        LR or shrinkage in this ablation -- floor/decay is the only
-        variable under test)."""
+        GAMMA1/GAMMA2/LMBDA1/LMBDA2 (no decaying LR or shrinkage in
+        this ablation -- floor/decay is the only variable under
+        test)."""
         if i_inner not in local_qi:
             local_qi[i_inner] = svd_base.qi[i_inner].copy()
             local_bi[i_inner] = float(svd_base.bi[i_inner])
@@ -171,8 +172,9 @@ def main() -> None:
         shown = [most_popular_iid]
 
         first_row = data[(data['user_idx'] == u) & (data['itemId'] == most_popular_iid)]
-        r_first = float(first_row['interaction'].iloc[0]) if len(first_row) > 0 else 0.0
-        if i_0_inner is not None:
+        has_first = len(first_row) > 0
+        r_first = float(first_row['interaction'].iloc[0]) if has_first else 0.0
+        if i_0_inner is not None and has_first:
             pu_cold, bu_cold = partial_lfm_update_cold(pu_cold, bu_cold, i_0_inner, r_first,
                                                          local_qi, local_bi)
 
@@ -186,9 +188,10 @@ def main() -> None:
             shown.extend(batch)
             for item in batch:
                 row = data[(data['user_idx'] == u) & (data['itemId'] == item)]
-                r_ui = float(row['interaction'].iloc[0]) if len(row) > 0 else 0.0
+                has_row = len(row) > 0
+                r_ui = float(row['interaction'].iloc[0]) if has_row else 0.0
                 i_inner = item_to_iidx.get(item)
-                if i_inner is not None:
+                if i_inner is not None and has_row:
                     pu_cold, bu_cold = partial_lfm_update_cold(pu_cold, bu_cold, i_inner, r_ui,
                                                                  local_qi, local_bi)
             round_number += 1

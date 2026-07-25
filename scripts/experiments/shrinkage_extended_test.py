@@ -1,42 +1,29 @@
 """
-shrinkage_test.py
-===================
-Ablation: sweeps the confidence-weighted shrinkage constant c. Runs on
-top of a decaying learning-rate schedule (an earlier design choice,
-since dropped -- see decaying_lr_test.py, which later found no
-measurable RMSE difference vs. a constant rate). This does not affect
-the shrinkage-constant conclusion here: almost no cold user receives
-more than one real partial-SGD update regardless of k, so decaying vs.
-constant learning rate makes no practical difference to these results.
+shrinkage_extended_test.py
+=============================
+Follow-up to shrinkage_test.py: the original shrinkage constant c sweep
+(c in {5, 10, 20, 50, 100}) found validation RMSE decreasing
+monotonically across the entire tested range, with c=100 winning at
+every elicitation budget k -- meaning the sweep never found a turning
+point, only ran out of grid. This script extends the same sweep to
+much larger c (up to 1e6) to find where (or whether) the improvement
+actually plateaus or reverses: if personalised RMSE keeps improving as
+c grows, note where it plateaus; if it eventually gets worse
+(over-shrinking erases the personalisation signal entirely, converging
+to the item-level baseline as c -> infinity), report that turning
+point.
 
-Current prediction (no shrinkage): a_hat = mu + b_u^c + b_i + (p_u^c)^T q_i
-    -- always fully trusts the personalisation term, however little
-       evidence supports it.
-
-Shrinkage prediction: a_hat = mu + b_i + alpha(k) * (b_u^c + (p_u^c)^T q_i)
-    -- alpha(k) = k / (k + c), a classic empirical-Bayes-style shrinkage
-       weight (Efron & Morris, 1975). Small k (few interactions
-       revealed) -> alpha near 0, trust the stable item-level baseline.
-       Large k -> alpha near 1, trust the personalisation term fully.
-       c controls how many interactions are needed before
-       personalisation is "half-trusted".
-
-Since alpha depends only on k (the total session length at evaluation
-time), shrinkage only changes SCORING, not the active-learning loop
-itself. That means each user's session can be run ONCE per k
-(identical to the decaying-LR reference simulation), then the held-out
-test items are re-scored under every candidate c value without
-re-running the expensive active-learning loop.
-
-c=None reproduces the no-shrinkage prediction exactly (alpha=1 always)
--- included as the baseline row for direct comparison.
+As c -> infinity, alpha(k) = k/(k+c) -> 0 for any finite k, so the
+shrunk prediction converges to mu + b_i (i.e. RMSE converges to the
+item-level baseline's own RMSE) -- this script's own de-facto upper
+bound on how much shrinkage alone can ever help.
 
 Reference strategy: SHLCP, same 200-user tuning subset and k grid as
-decaying_lr_test.py, so results are directly comparable.
+shrinkage_test.py, so results are directly comparable.
 
 Usage
 -----
-    python scripts/experiments/shrinkage_test.py
+    python scripts/experiments/shrinkage_extended_test.py
 
 Input
 -----
@@ -44,16 +31,8 @@ Input
 
 Output
 ------
-    results/shrinkage_test_results.csv
+    results/shrinkage_extended_test_results.csv
         Columns: k, c, alpha_at_this_k, val_rmse, n_users
-
-Complexity
-----------
-O(|K_VALUES| * 200) active-learning sessions (each O(k*F)), each then
-re-scored O(|C_GRID|) times at O(1) per candidate (only the scoring
-formula changes, not the trained parameters) -- this is what makes the
-"run once, re-score many times" design cheaper than a naive re-run per
-c value.
 """
 
 from __future__ import annotations
@@ -72,11 +51,11 @@ from surprise import accuracy
 SCRIPT_DIR: str = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR: str = os.path.join(SCRIPT_DIR, '..', '..', 'results')
 MODEL_CACHE: str = os.path.join(RESULTS_DIR, 'base_model_cache.pkl')
-OUT_SHRINK: str = os.path.join(RESULTS_DIR, 'shrinkage_test_results.csv')
+OUT_SHRINK_EXT: str = os.path.join(RESULTS_DIR, 'shrinkage_extended_test_results.csv')
 
 K_VALUES: List[int] = [10, 25, 50, 100]
-# None = no shrinkage (alpha=1 always); other values are candidate c's.
-C_GRID: List[Optional[int]] = [None, 5, 10, 20, 50, 100]
+# Extends shrinkage_test.py's grid (which stopped at 100) upward.
+C_GRID: List[Optional[int]] = [100, 200, 500, 1000, 10000, 1000000]
 
 
 def _stable_seed(u: int, shown: List[Any]) -> int:
@@ -89,9 +68,9 @@ def _stable_seed(u: int, shown: List[Any]) -> int:
 
 
 def main() -> None:
-    """Runs the SHLCP shrinkage-constant sweep (on top of decaying LR)
-    across all four elicitation budgets and writes
-    ``results/shrinkage_test_results.csv``.
+    """Runs the extended SHLCP shrinkage-constant sweep (on top of
+    decaying LR) across all four elicitation budgets and writes
+    ``results/shrinkage_extended_test_results.csv``.
     """
     os.makedirs(RESULTS_DIR, exist_ok=True)
     t_start = time.time()
@@ -121,9 +100,6 @@ def main() -> None:
 
     def split_unseen_items(u: int, shown: List[Any],
                             val_frac: float = 0.5) -> Tuple[List[Any], List[Any]]:
-        """Splits remaining unseen items into validation/test halves,
-        deterministically seeded per (u, shown). Only the validation
-        half is used in this ablation."""
         shown_set = set(shown)
         unseen    = [iid for iid in eligible_items if iid not in shown_set]
         rng       = np.random.RandomState(_stable_seed(u, shown))
@@ -136,9 +112,6 @@ def main() -> None:
         local_qi: Dict[int, np.ndarray], local_bi: Dict[int, float],
         gamma1_eff: float, gamma2_eff: float, lmbda1: float, lmbda2: float
     ) -> Tuple[np.ndarray, float]:
-        """One partial-SGD update under a decaying learning-rate
-        schedule -- gamma1_eff/gamma2_eff are pre-scaled by the caller
-        before being passed in."""
         if i_inner not in local_qi:
             local_qi[i_inner] = svd_model.qi[i_inner].copy()
             local_bi[i_inner] = float(svd_model.bi[i_inner])
@@ -154,7 +127,6 @@ def main() -> None:
         return pu_new, bu_cold
 
     def select_batch_items_cold(pu_cold, bu_cold, shown, local_qi, local_bi, batch_size=3):
-        # SHLCP: select the batch_size lowest-scoring unseen items.
         mu        = svd_base.trainset.global_mean
         shown_set = set(shown)
         scores    = {}
@@ -222,7 +194,7 @@ def main() -> None:
     rows = []
     for k in K_VALUES:
         print(f"\n=== k={k}: running {len(hp_search_users)} decaying-LR sessions once, "
-              f"re-scoring under {len(C_GRID)} shrinkage settings ===", flush=True)
+              f"re-scoring under {len(C_GRID)} extended shrinkage settings ===", flush=True)
         t_k = time.time()
 
         per_c_rmses = {c: [] for c in C_GRID}
@@ -238,7 +210,7 @@ def main() -> None:
                 continue
 
             for c in C_GRID:
-                alpha = 1.0 if c is None else k / (k + c)
+                alpha = k / (k + c)
                 preds = []
                 for row in test_df.itertuples():
                     i_inner = item_to_iidx.get(row.itemId)
@@ -253,33 +225,31 @@ def main() -> None:
         for c in C_GRID:
             vals = per_c_rmses[c]
             avg  = np.mean(vals) if vals else float('nan')
-            alpha_at_k = 1.0 if c is None else k / (k + c)
+            alpha_at_k = k / (k + c)
             rows.append({
-                'k': k, 'c': c if c is not None else 'none',
-                'alpha_at_this_k': round(alpha_at_k, 3),
+                'k': k, 'c': c,
+                'alpha_at_this_k': round(alpha_at_k, 5),
                 'val_rmse': round(avg, 4), 'n_users': len(vals),
             })
-            label = 'no shrinkage' if c is None else f'c={c}'
-            print(f"  [{label}] alpha={alpha_at_k:.3f}  val RMSE={avg:.4f}  (n={len(vals)})",
+            print(f"  [c={c}] alpha={alpha_at_k:.5f}  val RMSE={avg:.4f}  (n={len(vals)})",
                   flush=True)
 
         print(f"  k={k} total time: {time.time()-t_k:.1f}s", flush=True)
 
     df = pd.DataFrame(rows)
-    df.to_csv(OUT_SHRINK, index=False)
+    df.to_csv(OUT_SHRINK_EXT, index=False)
 
     print(f"\n{'='*70}", flush=True)
-    print("=== Best c per k (lowest val RMSE) ===", flush=True)
+    print("=== Best c per k (lowest val RMSE), extended grid ===", flush=True)
     for k in K_VALUES:
         dfk = df[df['k'] == k]
         best_row = dfk.loc[dfk['val_rmse'].idxmin()]
-        no_shrink_row = dfk[dfk['c'] == 'none'].iloc[0]
-        improvement = no_shrink_row['val_rmse'] - best_row['val_rmse']
-        print(f"  k={k}: best c={best_row['c']} RMSE={best_row['val_rmse']:.4f} "
-              f"vs. no-shrinkage RMSE={no_shrink_row['val_rmse']:.4f} "
-              f"(improvement: {improvement:+.4f})", flush=True)
+        largest_c_row = dfk.loc[dfk['c'].idxmax()]
+        print(f"  k={k}: best c={best_row['c']} RMSE={best_row['val_rmse']:.4f}  "
+              f"(c={largest_c_row['c']} (near item-baseline limit): "
+              f"RMSE={largest_c_row['val_rmse']:.4f})", flush=True)
 
-    print(f"\nSaved to {OUT_SHRINK}", flush=True)
+    print(f"\nSaved to {OUT_SHRINK_EXT}", flush=True)
     print(f"TOTAL TIME: {time.time()-t_start:.1f}s ({(time.time()-t_start)/60:.1f} min)", flush=True)
 
 

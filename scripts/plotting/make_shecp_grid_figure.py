@@ -2,9 +2,8 @@
 make_shecp_grid_figure.py
 ============================
 Heatmap of the SHECP epsilon floor/decay validation-RMSE grid search
-(see README.md "Reproducing Thesis Results" -> Table 3.8 / Figure 3.x).
-Communicates the "decay=0.95 dominates at every floor" finding faster
-than the table alone.
+(see shecp_grid_search.py). Communicates the "decay=0.95 dominates at
+every floor" finding faster than the table alone.
 
 Usage
 -----

@@ -1,44 +1,38 @@
 """
 personalised_strategies.py
 ============================
-Implements and evaluates the four confidence-based personalised active
-learning strategies (SHHCP, SHLCP, SHMCP, SHECP) with the final,
-adopted correction mechanisms:
+Implements and evaluates four confidence-based personalised active
+learning strategies for the cold-user problem: SHHCP, SHLCP, SHMCP,
+and SHECP. Each strategy selects which items to show a new user next,
+applying an incremental update to that user's own latent factors after
+every response.
 
-    - USE_DECAYING_LR : decaying learning rate for the incremental
-      partial-SGD update, gamma_eff(t) = gamma0 / sqrt(1+t)
-      (see README.md "Methodology" -> "Partial SGD").
-    - SHRINKAGE_C     : confidence-weighted shrinkage constant c=100,
-      alpha(k) = k / (k + c), blending the personalised prediction
-      toward the stable item-level baseline in proportion to how
-      little evidence has been observed (see README.md "Methodology"
-      -> "Confidence Shrinkage").
-    - SHECP_FLOOR / SHECP_DECAY : SHECP's epsilon-greedy exploration
-      floor and decay rate, tuned on the full 1,000-user evaluation
-      population (see README.md "Configuration").
+Key mechanisms:
+    - Confidence-weighted shrinkage toward the item-level baseline
+      score (SHRINKAGE_C).
+    - SHECP's epsilon-greedy explore/exploit schedule (SHECP_FLOOR,
+      SHECP_DECAY).
+    - An update is skipped for any shown item with no recorded
+      interaction for that user, rather than treating a missing entry
+      as a dislike.
+    - Cold-start initialisation uses the most popular item's factor
+      vector, except at k=100 where the zero vector performs better
+      (ZERO_INIT_K_VALUES).
 
-Uses a per-user local copy of the item vectors (local_qi/local_bi) so
-that the partial-SGD update performed for one cold user never leaks
-into another cold user's evaluation, while the shared base model
-(the item vectors and biases learned once on warm users) stays frozen
-throughout. See README.md "Methodology" -> "Active Learning" for the
-full algorithm description.
+Uses a per-user local copy of each touched item's vector/bias so that
+updates for one cold user never affect another user's evaluation; the
+shared base model stays frozen throughout.
 
-Runs in parallel via multiprocessing.Pool (one worker process per CPU
-core requested); each worker independently evaluates a subset of
-(strategy, k, user) combinations.
+Runs in parallel via multiprocessing.Pool, one worker process per CPU
+core requested.
 
 Usage
 -----
-Run directly to execute a 20-user smoke test only (a quick correctness
-check, not the full experiment):
+Run directly for a 20-user smoke test:
 
     python scripts/model/personalised_strategies.py
 
-For the full 1,000-user x 4-strategy x 4-k evaluation, use this
-module's run() function via scripts/model/run_complete_pipeline.py, which
-also runs the non-personalised baselines and significance tests in the
-same pass:
+For the full evaluation, use run_complete_pipeline.py:
 
     python scripts/model/run_complete_pipeline.py
 
@@ -50,14 +44,6 @@ Output
 ------
     results/personalised_results.csv
         Columns: strategy, k, user, rmse, hr5, hr10, ndcg5, ndcg10
-
-Complexity
-----------
-Setup (build_model_cache.py) is O(n) in dataset size; per-user
-per-interaction cost here is O(F) (F = number of latent factors),
-independent of dataset size -- see thesis Section 3.7.1 ("Motivation
-and Efficiency Gain") for the full argument and measure_update_cost.py
-for the measured wall-clock comparison against full model retraining.
 """
 
 from __future__ import annotations
@@ -80,63 +66,64 @@ MODEL_CACHE: str = os.path.join(RESULTS_DIR, 'base_model_cache.pkl')
 OUT_FINAL: str = os.path.join(RESULTS_DIR, 'personalised_results.csv')
 
 # Number of sampled negatives per positive item in HR@K/NDCG@K
-# evaluation (He et al., 2017 methodology; thesis Section 3.9).
+# evaluation (He et al., 2017 methodology).
 N_NEG: int = 99
 
-# Number of partial-SGD steps applied per revealed interaction. Tuned
-# to 1 via the SGD-steps ablation (thesis Table 3.7) -- more steps let
-# the model overfit each individual, noisy binary response.
+# Number of partial-SGD steps applied per revealed interaction. More
+# than 1 lets the model overfit each individual, noisy binary response.
 NUM_SGD_STEPS: int = 1
 
-# SHECP's epsilon-greedy exploration floor/decay: epsilon_r =
-# max(SHECP_FLOOR, SHECP_DECAY ** r). Tuned on the full 1,000-user
-# evaluation population -- see shecp_grid_search.py and thesis
-# Table 3.8 / "Validating the floor choice" paragraph.
+# SHECP's epsilon-greedy exploration floor/decay:
+# epsilon_r = max(SHECP_FLOOR, SHECP_DECAY ** r).
 SHECP_FLOOR: float = 0.05
 SHECP_DECAY: float = 0.95
 
 # Number of items revealed per active-learning round before the next
-# selection is made. Thesis Section 3.6/Chapter 5 Limitation 6.
+# selection is made.
 BATCH_SIZE: int = 3
 
-# Final, adopted correction mechanisms (see module docstring above).
-USE_DECAYING_LR: bool = True
 SHRINKAGE_C: Optional[int] = 100
+
+# Regularisation coefficients for the cold-user partial update.
+LMBDA1: float = 1e-7
+LMBDA2: float = 1e-6
+
+# k values that use zero-vector cold-start initialisation instead of
+# the item-based default.
+ZERO_INIT_K_VALUES: frozenset = frozenset({100})
 
 Pred = namedtuple('Prediction', ['uid', 'iid', 'r_ui', 'est', 'details'])
 
-# ── Globals populated once per worker process (via pool initializer) ──────
-# multiprocessing.Pool with the 'spawn' start method re-imports this
-# module fresh in every worker process, so each worker gets its own
-# copy of these globals, populated once by _worker_init and read (never
-# mutated) by every subsequent call to _select_batch in that worker --
-# this is what makes it safe to use plain module-level globals here
-# rather than passing the cache through every function call.
+# Populated once per worker process by _worker_init, then only read
+# (never mutated) by every subsequent call in that worker -- this is
+# what makes plain module-level globals safe here.
 _cache: Optional[Dict[str, Any]] = None
 _eligible_inner_indices: Optional[np.ndarray] = None
 _eligible_iid_array: Optional[np.ndarray] = None
 _inner_to_position: Optional[Dict[int, int]] = None
 _base_qi_eligible: Optional[np.ndarray] = None
 _base_bi_eligible: Optional[np.ndarray] = None
+_user_item_interaction: Optional[Dict[int, Dict[Any, float]]] = None
 
 
-def _worker_init() -> None:
+def _worker_init(eval_users: Optional[List[Any]] = None) -> None:
     """Runs once per worker process when the Pool starts.
 
-    Loads the model cache and pre-computes the eligible-item latent-
-    vector/bias arrays used by every subsequent call to ``_select_batch``
-    in that worker, so per-user work does not re-load or re-index
-    anything.
+    Loads the model cache, pre-computes the eligible-item latent-
+    vector/bias arrays used by ``_select_batch``, and builds a
+    per-user interaction lookup dict so ``process_one_user`` never has
+    to filter the full interaction table.
 
-    Side Effects
-    ------------
-    Populates the module-level ``_cache``, ``_eligible_inner_indices``,
-    ``_eligible_iid_array``, ``_inner_to_position``,
-    ``_base_qi_eligible``, ``_base_bi_eligible`` globals in the calling
-    worker process.
+    Parameters
+    ----------
+    eval_users : list, optional
+        Cold user indices this run will evaluate. When given, the
+        lookup dict is built only from these users' rows instead of
+        the whole dataset.
     """
     global _cache, _eligible_inner_indices, _eligible_iid_array
     global _inner_to_position, _base_qi_eligible, _base_bi_eligible
+    global _user_item_interaction
     with open(MODEL_CACHE, 'rb') as f:
         _cache = pickle.load(f)
     eligible_items = _cache['eligible_items']
@@ -148,32 +135,35 @@ def _worker_init() -> None:
     _base_qi_eligible = svd_base.qi[_eligible_inner_indices].copy()
     _base_bi_eligible = svd_base.bi[_eligible_inner_indices].copy()
 
+    data = _cache['data']
+    if eval_users is not None:
+        eval_users_set = set(int(u) for u in eval_users)
+        user_data = data[data['user_idx'].isin(eval_users_set)]
+    else:
+        user_data = data
+    _user_item_interaction = {
+        int(u): dict(zip(g['itemId'].values, g['interaction'].values))
+        for u, g in user_data.groupby('user_idx')
+    }
+
 
 def _seeded_rng(*parts: Any) -> np.random.RandomState:
-    """Builds a deterministic per-work-item random number generator.
+    """Builds a deterministic RNG seeded from ``parts``.
 
-    Uses hashlib.md5 rather than Python's built-in ``hash()`` --
-    ``hash()`` on strings is randomised per-process (PYTHONHASHSEED)
-    unless explicitly fixed, which would otherwise give a different
-    epsilon-greedy/negative-sampling draw on every run, even for the
-    same work item, since each worker process spawned by mp.Pool is a
-    fresh interpreter with its own random hash seed.
+    Uses hashlib.md5 instead of Python's built-in ``hash()``, which is
+    randomised per-process and would otherwise give a different draw
+    on every run under multiprocessing.
 
     Parameters
     ----------
     *parts : Any
-        Values identifying the work item (e.g. user id, strategy, k,
-        purpose tag); stringified and joined to form the hash key.
+        Values identifying the work item; stringified and joined to
+        form the hash key.
 
     Returns
     -------
     np.random.RandomState
-        A generator seeded deterministically from ``parts``, identical
-        across repeated runs and across worker processes.
-
-    See Also
-    --------
-    README.md "Reproducibility".
+        A generator seeded deterministically from ``parts``.
     """
     key = '|'.join(str(p) for p in parts)
     seed = int(hashlib.md5(key.encode()).hexdigest(), 16) % (2**32)
@@ -184,31 +174,21 @@ def _partial_lfm_update_cold(
     svd_model: SVD, pu_cold: np.ndarray, bu_cold: float, i_inner: int, r_ui: float,
     local_qi: Dict[int, np.ndarray], local_bi: Dict[int, float],
     gamma1: float, gamma2: float, lmbda1: float, lmbda2: float,
-    num_sgd_steps: int = 1, update_index: int = 0
+    num_sgd_steps: int = 1
 ) -> Tuple[np.ndarray, float]:
     """Applies one (or ``num_sgd_steps``) partial-SGD update(s) to a cold
     user's own parameters given a single newly-observed interaction.
 
-    Updates only the four quantities directly involved in predicting
-    ``(u, i_inner)``: the cold user's factor vector ``pu_cold`` and bias
-    ``bu_cold``, and the *local copy* of item ``i_inner``'s vector/bias
-    (``local_qi``/``local_bi``, created on first touch as a copy of the
-    frozen base model's values). All other model parameters -- every
-    other item's vector/bias, every warm user's parameters -- are
-    untouched. This is what keeps the per-interaction cost O(F)
-    (independent of dataset size) instead of O(warm_interactions x F)
-    for a full retrain -- see thesis Section 3.7.1 and Eq. 3.9-3.10.
-
-    If ``USE_DECAYING_LR``, ``gamma1``/``gamma2`` are scaled by
-    ``1/sqrt(1+update_index)`` before use (thesis Eq. "gamma_eff"),
-    confirmed to reduce validation RMSE in decaying_lr_test.py.
+    Updates only the cold user's factor vector/bias and the local copy
+    of the just-shown item's vector/bias (created on first touch as a
+    copy of the frozen base model's values). Every other parameter --
+    every other item, every warm user -- is untouched, which is what
+    keeps this update cheap regardless of dataset size.
 
     Parameters
     ----------
     svd_model : surprise.SVD
-        The frozen base model (only used for its global mean and, on
-        first touch of an item, its base ``qi``/``bi`` to seed the
-        local copy).
+        The frozen base model.
     pu_cold : np.ndarray, shape (F,)
         The cold user's current latent factor vector.
     bu_cold : float
@@ -229,12 +209,7 @@ def _partial_lfm_update_cold(
         L2 regularisation coefficients for the bias and factor-vector
         updates.
     num_sgd_steps : int, default 1
-        Number of SGD steps to apply for this single revealed
-        interaction (tuned to 1; see ``NUM_SGD_STEPS``).
-    update_index : int, default 0
-        Count of prior local updates already applied to this user's
-        (pu_cold, bu_cold) this session (0-indexed); used only for the
-        decaying-learning-rate schedule.
+        Number of SGD steps to apply for this interaction.
 
     Returns
     -------
@@ -242,19 +217,7 @@ def _partial_lfm_update_cold(
         The updated cold-user factor vector.
     bu_cold : float
         The updated cold-user bias.
-
-    Notes
-    -----
-    ``local_qi``/``local_bi`` are mutated in place as a side effect
-    (the updated item vector/bias for ``i_inner`` is written back into
-    them); only ``pu_cold``/``bu_cold`` are returned, since those are
-    not stored in a dict keyed by item.
     """
-    if USE_DECAYING_LR:
-        decay  = 1.0 / np.sqrt(1.0 + update_index)
-        gamma1 = gamma1 * decay
-        gamma2 = gamma2 * decay
-
     if i_inner not in local_qi:
         local_qi[i_inner] = svd_model.qi[i_inner].copy()
         local_bi[i_inner] = float(svd_model.bi[i_inner])
@@ -275,12 +238,11 @@ def _partial_lfm_update_cold(
 def _shrink_alpha(k: int) -> float:
     """Computes the confidence-weighted shrinkage mixing weight alpha(k).
 
-    ``alpha(k) = k / (k + SHRINKAGE_C)`` (thesis Eq. "shrinkage",
-    empirical-Bayes-style; Efron & Morris, 1975). As ``k`` grows,
-    ``alpha -> 1`` and the personalised term dominates the prediction;
-    as ``k -> 0``, ``alpha -> 0`` and the prediction reduces to the
-    stable item-level baseline ``mu + b_i``. If ``SHRINKAGE_C`` is
-    None, alpha is always 1 (no shrinkage).
+    ``alpha(k) = k / (k + SHRINKAGE_C)``. As ``k`` grows, alpha -> 1
+    and the personalised term dominates the prediction; as k -> 0,
+    alpha -> 0 and the prediction reduces to the item-level baseline
+    ``mu + b_i``. If ``SHRINKAGE_C`` is None, alpha is always 1 (no
+    shrinkage).
 
     Parameters
     ----------
@@ -296,11 +258,9 @@ def _shrink_alpha(k: int) -> float:
     return 1.0 if SHRINKAGE_C is None else k / (k + SHRINKAGE_C)
 
 
-# Global base-model mean, set once per (strategy, k, user) work item in
-# process_one_user from the worker-local _cache. List-boxed (rather than
-# a plain module-level float) so _score can read the current value
-# without a `global` statement, since it never itself needs to assign
-# to this name -- only mu_base_global[0] is mutated, by the caller.
+# Base-model mean, set once per work item in process_one_user.
+# List-boxed so _score can read the current value without a `global`
+# statement.
 mu_base_global: List[Optional[float]] = [None]
 
 
@@ -309,7 +269,6 @@ def _score(bu_cold: float, bi: float, pu_cold: np.ndarray, qi: np.ndarray,
     """Computes the shrinkage-weighted predicted interaction score.
 
     ``score = clip(mu + b_i + alpha * (b_u^c + p_u^c . q_i), 0, 1)``
-    (thesis Eq. "shrinkage prediction").
 
     Parameters
     ----------
@@ -327,8 +286,7 @@ def _score(bu_cold: float, bi: float, pu_cold: np.ndarray, qi: np.ndarray,
     Returns
     -------
     float
-        Predicted score, clipped to [0, 1] (the interaction label
-        range).
+        Predicted score, clipped to [0, 1].
     """
     return float(np.clip(mu_base_global[0] + bi + alpha * (bu_cold + np.dot(pu_cold, qi)), 0, 1))
 
@@ -342,23 +300,21 @@ def _select_batch(
 ) -> List[Any]:
     """Selects the next batch of items to show a cold user.
 
-    Scores every not-yet-shown eligible item under the *raw* (non-
-    shrunk) prediction, then picks ``batch_size`` of them according to
+    Scores every not-yet-shown eligible item under the raw (non-shrunk)
+    prediction, then picks ``batch_size`` of them according to
     ``strategy``:
 
-    - SHHCP: the ``batch_size`` highest-scoring items (pure exploitation).
-    - SHLCP: the ``batch_size`` lowest-scoring items (pure exploration).
-    - SHMCP: the ``batch_size`` items closest to the median score
-      (uncertainty sampling).
+    - SHHCP: the highest-scoring items (pure exploitation).
+    - SHLCP: the lowest-scoring items (pure exploration).
+    - SHMCP: the items closest to the median score (uncertainty
+      sampling).
     - SHECP: with probability ``epsilon_r = max(SHECP_FLOOR,
       SHECP_DECAY ** round_number)``, behaves like SHLCP (explore);
       otherwise like SHHCP (exploit).
 
-    Shrinkage (``_shrink_alpha``) is applied only at final scoring/
-    evaluation time, never during item selection here -- alpha(k)
-    depends on total session length, not per-round state, so
-    "un-shrinking" the selection score keeps the item-ranking decision
-    independent of how many items will ultimately be shown.
+    Shrinkage is applied only at final scoring, never during item
+    selection here, since alpha(k) depends on total session length,
+    not per-round state.
 
     Parameters
     ----------
@@ -381,8 +337,8 @@ def _select_batch(
     batch_size : int
         Number of items to select.
     round_number : int
-        0-indexed active-learning round (one round = one batch); used
-        only by SHECP's epsilon schedule.
+        0-indexed active-learning round; used only by SHECP's epsilon
+        schedule.
     egreedy_rng_local : np.random.RandomState
         Per-work-item RNG for SHECP's explore/exploit coin flip.
 
@@ -390,23 +346,15 @@ def _select_batch(
     -------
     list
         Up to ``batch_size`` raw itemId values, selected according to
-        ``strategy``. May return fewer than ``batch_size`` (or an
-        empty list) if fewer eligible unseen items remain.
+        ``strategy``. May return fewer (or an empty list) if fewer
+        eligible unseen items remain.
 
     Raises
     ------
     RuntimeError
-        If called before ``_worker_init`` has populated the module-
-        level eligible-item arrays in this worker process.
+        If called before ``_worker_init``.
     ValueError
         If ``strategy`` is not one of the four recognised strategies.
-
-    Complexity
-    ----------
-    O(|eligible_items|) for the vectorised scoring pass, plus
-    O(|eligible_items|) for ``top_b``'s partial sort (``np.argpartition``
-    is O(n), avoiding a full O(n log n) sort since only the top/bottom
-    ``batch_size`` elements are needed).
     """
     if _base_qi_eligible is None:
         raise RuntimeError("_select_batch called before _worker_init -- "
@@ -465,8 +413,8 @@ def _select_batch(
 
 def _stable_seed(u: int, shown: List[Any]) -> int:
     """Deterministic replacement for Python's built-in ``hash()`` on
-    strings -- see ``_seeded_rng``'s docstring above for why this
-    matters under multiprocessing.
+    strings -- see ``_seeded_rng`` for why this matters under
+    multiprocessing.
 
     Parameters
     ----------
@@ -491,12 +439,10 @@ def _split_unseen_items(
     """Splits a cold user's remaining unseen eligible items into a
     validation half and a test half.
 
-    The validation half is used by hyperparameter-tuning scripts
-    elsewhere in this repo (e.g. decaying_lr_test.py); the test half is
-    used here for final RMSE/HR@K/NDCG@K reporting. The split is
-    deterministically seeded per ``(u, shown)`` via ``_stable_seed``, so
-    re-running this function with the same arguments always produces
-    the same partition, and the two halves never overlap.
+    The split is deterministically seeded per ``(u, shown)`` via
+    ``_stable_seed``, so re-running this function with the same
+    arguments always produces the same partition, and the two halves
+    never overlap.
 
     Parameters
     ----------
@@ -534,7 +480,7 @@ def _sampled_metrics_at_k(
     Following He et al. (2017): the positive item is ranked against a
     fixed set of sampled negatives (``rank(i+) = 1 + count(neg_scores >
     pos_score)``, ties resolved in the positive item's favour), and
-    HR@K / NDCG@K are then read off that rank (thesis Eq. 3.15-3.16).
+    HR@K / NDCG@K are then read off that rank.
 
     Parameters
     ----------
@@ -563,21 +509,20 @@ def process_one_user(work_item: Tuple[str, int, int]) -> Optional[Dict[str, Any]
     """Runs the full active-learning simulation for one (strategy, k,
     user) combination.
 
-    Algorithm (thesis Section 3.7.3, Algorithm 1)
-    -----------------------------------------------
+    Algorithm
+    ---------
     1. Initialise the cold user's factor vector at the most popular
-       item's own base vector (a content-informed starting point, not
-       the zero vector) and bias at 0.
+       item's own base vector (or the zero vector, see
+       ZERO_INIT_K_VALUES) and bias at 0.
     2. Show the most popular item first; observe the response; apply
        one partial-SGD update.
     3. While fewer than ``k`` items have been shown: select the next
-       batch of ``BATCH_SIZE`` items via ``_select_batch`` (strategy-
-       dependent), observe each response, apply a partial-SGD update
-       per revealed interaction.
+       batch of ``BATCH_SIZE`` items via ``_select_batch``, observe
+       each response, apply a partial-SGD update per revealed
+       interaction.
     4. Split the user's remaining unseen items into validation/test
-       halves (deterministic, thesis 50/50 split); score RMSE on the
-       test half, and HR@{5,10}/NDCG@{5,10} against ``N_NEG`` sampled
-       negatives per positive test item.
+       halves; score RMSE on the test half, and HR@{5,10}/NDCG@{5,10}
+       against ``N_NEG`` sampled negatives per positive test item.
 
     Parameters
     ----------
@@ -590,18 +535,16 @@ def process_one_user(work_item: Tuple[str, int, int]) -> Optional[Dict[str, Any]
     dict or None
         ``{'strategy', 'k', 'user', 'rmse', 'hr5', 'hr10', 'ndcg5',
         'ndcg10'}`` on success. Returns ``None`` if the user has no
-        held-out test items (a structural consequence of dataset
-        sparsity -- see thesis Section 4.3, "~43-46% dropout").
+        held-out test items.
 
     Notes
     -----
     Reads the worker-local ``_cache`` global (populated by
     ``_worker_init``) -- this function must only be called as a
-    ``multiprocessing.Pool`` worker target with that initializer, never
-    directly from the main process.
+    ``multiprocessing.Pool`` worker target with that initializer.
     """
     strategy, k, u = work_item
-    data             = _cache['data']
+    user_dict        = _user_item_interaction.get(int(u), {})
     eligible_items   = _cache['eligible_items']
     item_to_iidx     = _cache['item_to_iidx']
     most_popular_iid = _cache['most_popular_iid']
@@ -610,7 +553,8 @@ def process_one_user(work_item: Tuple[str, int, int]) -> Optional[Dict[str, Any]
     mu_base          = _cache['mu_base']
     n_factors        = _cache['n_factors']
     GAMMA1, GAMMA2   = _cache['GAMMA1'], _cache['GAMMA2']
-    LMBDA1, LMBDA2   = _cache['LMBDA1'], _cache['LMBDA2']
+    # LMBDA1/LMBDA2 use this module's own constants above, not the
+    # cache's.
     mu_base_global[0] = mu_base
 
     alpha = _shrink_alpha(k)
@@ -618,27 +562,27 @@ def process_one_user(work_item: Tuple[str, int, int]) -> Optional[Dict[str, Any]
     egreedy_rng_local = _seeded_rng(u, strategy, k, 'egreedy')
     neg_rng_local     = _seeded_rng(u, strategy, k, 'negsample')
 
-    # Cold-start initialisation: the user's latent vector starts at the
-    # most popular item's own vector (a content-informed starting point),
-    # not the zero vector -- see README.md "Methodology".
-    if i_0_inner is not None:
+    # Item-based init for every k except ZERO_INIT_K_VALUES, which use
+    # the zero vector instead.
+    if k in ZERO_INIT_K_VALUES:
+        pu_cold = np.zeros(n_factors)
+    elif i_0_inner is not None:
         pu_cold = svd_base.qi[i_0_inner].copy()
     else:
         pu_cold = np.zeros(n_factors)
     bu_cold  = 0.0
     local_qi, local_bi = {}, {}
     shown = [most_popular_iid]
-    n_updates = 0
 
-    first_row = data[(data['user_idx'] == u) & (data['itemId'] == most_popular_iid)]
-    r_first   = float(first_row['interaction'].iloc[0]) if len(first_row) > 0 else 0.0
-    if i_0_inner is not None:
+    # Skip the update entirely if this user has no recorded interaction
+    # for the item -- it's still added to `shown`, so k is unaffected.
+    has_first = most_popular_iid in user_dict
+    r_first   = float(user_dict[most_popular_iid]) if has_first else 0.0
+    if i_0_inner is not None and has_first:
         pu_cold, bu_cold = _partial_lfm_update_cold(
             svd_base, pu_cold, bu_cold, i_0_inner, r_first, local_qi, local_bi,
-            GAMMA1, GAMMA2, LMBDA1, LMBDA2, num_sgd_steps=NUM_SGD_STEPS,
-            update_index=n_updates
+            GAMMA1, GAMMA2, LMBDA1, LMBDA2, num_sgd_steps=NUM_SGD_STEPS
         )
-        n_updates += 1
 
     round_number = 0
     while len(shown) < k:
@@ -650,45 +594,42 @@ def process_one_user(work_item: Tuple[str, int, int]) -> Optional[Dict[str, Any]
             break
         shown.extend(batch)
         for item in batch:
-            row  = data[(data['user_idx'] == u) & (data['itemId'] == item)]
-            r_ui = float(row['interaction'].iloc[0]) if len(row) > 0 else 0.0
+            has_row = item in user_dict
+            r_ui = float(user_dict[item]) if has_row else 0.0
             i_inner = item_to_iidx.get(item)
-            if i_inner is not None:
+            if i_inner is not None and has_row:
                 pu_cold, bu_cold = _partial_lfm_update_cold(
                     svd_base, pu_cold, bu_cold, i_inner, r_ui, local_qi, local_bi,
-                    GAMMA1, GAMMA2, LMBDA1, LMBDA2, num_sgd_steps=NUM_SGD_STEPS,
-                    update_index=n_updates
+                    GAMMA1, GAMMA2, LMBDA1, LMBDA2, num_sgd_steps=NUM_SGD_STEPS
                 )
-                n_updates += 1
         round_number += 1
 
     _, test_items = _split_unseen_items(eligible_items, u, shown, val_frac=0.5)
     shown_set = set(shown)
-    test_df = data[(data['user_idx'] == u) &
-                   (data['itemId'].isin(test_items)) &
-                   (~data['itemId'].isin(shown_set))]
-    if len(test_df) == 0:
+    # test_items already excludes shown items by construction above.
+    test_items_set = set(test_items)
+    test_rows = [(iid, r) for iid, r in user_dict.items() if iid in test_items_set]
+    if not test_rows:
         return None
 
     preds_manual = []
-    for row in test_df.itertuples():
-        i_inner = item_to_iidx.get(row.itemId)
+    for iid, r in test_rows:
+        i_inner = item_to_iidx.get(iid)
         if i_inner is None:
             continue
         qi  = local_qi.get(i_inner, svd_base.qi[i_inner])
         bi  = local_bi.get(i_inner, svd_base.bi[i_inner])
         est = _score(bu_cold, bi, pu_cold, qi, alpha)
-        preds_manual.append(Pred(uid=row.user_idx, iid=row.item_idx,
-                                  r_ui=row.interaction, est=est, details={}))
+        preds_manual.append(Pred(uid=u, iid=iid, r_ui=r, est=est, details={}))
     if not preds_manual:
         return None
     rmse = accuracy.rmse(preds_manual, verbose=False)
 
-    user_interacted = set(data[data['user_idx'] == u]['itemId'].tolist())
+    user_interacted = set(user_dict.keys())
     candidate_negs  = [iid for iid in eligible_items
                        if iid not in user_interacted and iid not in shown_set
                        and iid in item_to_iidx]
-    pos_test_iids = test_df[test_df['interaction'] == 1]['itemId'].tolist()
+    pos_test_iids = [iid for iid, r in test_rows if r == 1]
 
     user_hr5, user_hr10, user_ndcg5, user_ndcg10 = [], [], [], []
     for pos_iid in pos_test_iids:
@@ -744,8 +685,7 @@ def run(
         Elicitation budgets to evaluate, e.g. ``[10, 25, 50, 100]``.
     num_users : int
         Number of cold users to evaluate (the first ``num_users`` of
-        ``cache['cold_users']``, in the fixed order set by
-        build_model_cache.py's cold/warm split).
+        ``cache['cold_users']``).
     label : str
         Human-readable label for progress printouts.
 
@@ -753,20 +693,10 @@ def run(
     -------
     pd.DataFrame
         One row per (strategy, k, user) combination with a valid
-        result (see ``process_one_user``'s return value); combinations
-        with no held-out test items are silently omitted.
+        result; combinations with no held-out test items are silently
+        omitted.
     elapsed : float
-        Wall-clock seconds for the parallel evaluation (excludes cache
-        loading in the main process, but each worker's own cache load
-        via ``_worker_init`` is included in its share of the wall
-        clock).
-
-    Complexity
-    ----------
-    ``len(strategies) * len(k_values) * num_users`` work items,
-    processed in ``chunksize=4`` batches by ``n_workers`` processes;
-    each work item is O(k * F) (k partial-SGD updates plus O(F)
-    scoring per candidate item, per active-learning round).
+        Wall-clock seconds for the parallel evaluation.
     """
     with open(MODEL_CACHE, 'rb') as f:
         cache = pickle.load(f)
@@ -775,11 +705,11 @@ def run(
 
     work_items = [(s, k, u) for s in strategies for k in k_values for u in eval_users]
     print(f"\n=== {label}: {len(work_items)} work items, {n_workers} workers ===", flush=True)
-    print(f"    CONFIG: USE_DECAYING_LR={USE_DECAYING_LR}  SHRINKAGE_C={SHRINKAGE_C}",
-          flush=True)
+    print(f"    CONFIG: SHRINKAGE_C={SHRINKAGE_C}", flush=True)
 
     t0 = time.time()
-    with mp.Pool(processes=n_workers, initializer=_worker_init) as pool:
+    with mp.Pool(processes=n_workers, initializer=_worker_init,
+                  initargs=(eval_users,)) as pool:
         results = []
         for i, r in enumerate(pool.imap_unordered(process_one_user, work_items, chunksize=4)):
             if r is not None:
@@ -796,17 +726,13 @@ def run(
 def main() -> None:
     """Runs a 20-user smoke test as a quick correctness check.
 
-    For the full 1,000-user x 4-strategy x 4-k evaluation used to
-    produce the thesis's Chapter 4 results, use
-    ``scripts/model/run_complete_pipeline.py`` instead (see module
-    docstring), which calls ``run()`` directly at full scale.
+    For the full evaluation, use ``scripts/model/run_complete_pipeline.py``
+    instead, which calls ``run()`` directly at full scale.
 
     Raises
     ------
     RuntimeError
-        If the smoke test produces no valid (non-NaN RMSE) results,
-        indicating a correctness problem that should be fixed before
-        attempting the full-scale run.
+        If the smoke test produces no valid results.
     """
     mp.set_start_method('spawn', force=True)
     os.makedirs(RESULTS_DIR, exist_ok=True)
