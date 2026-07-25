@@ -64,7 +64,7 @@ subtle methodological gap in how this class of methods has previously
 been assessed. Under this corrected, fair evaluation, the thesis's
 central finding is that non-personalised, item-level baselines remain
 highly competitive on prediction accuracy (RMSE) against personalised
-selection in this dataset's sparsity regime -- a result that runs
+selection in this dataset's sparsity regime - a result that runs
 counter to the field's usual framing and is discussed at length in the
 thesis itself. This repository contains everything needed to
 reproduce that finding, and every other number and figure in the
