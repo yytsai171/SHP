@@ -1,6 +1,6 @@
-# Confidence-Based Active Learning Strategies for the Cold User Problem in Recommender Systems
+# SHP
 
-Code and data accompanying the MSc paper *"Confidence-Based Active
+Code and data for *"Confidence-Based Active
 Learning Strategies for Addressing the Cold User Problem in
 Recommender Systems Using Personalised Matrix Factorisation"*
 (Ying Ying Tsai, MSc Data Science and Marketing Analytics, Erasmus
@@ -12,17 +12,15 @@ dr. Flavius Frasincar).
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Research Contributions](#research-contributions)
-3. [Repository Structure](#repository-structure)
-4. [Installation](#installation)
-5. [Dataset](#dataset)
-6. [Running Experiments](#running-experiments)
-7. [Reproducing Paper Results](#reproducing-paper-results)
-8. [Methodology](#methodology)
-9. [Reproducibility](#reproducibility)
-10. [Citation](#citation)
-11. [License](#license)
-12. [Contact](#contact)
+2. [Repository Structure](#repository-structure)
+3. [Installation](#installation)
+4. [Dataset](#dataset)
+5. [Running Experiments](#running-experiments)
+6. [Reproducing Paper Results](#reproducing-paper-results)
+7. [Reproducibility](#reproducibility)
+8. [Citation](#citation)
+9. [License](#license)
+10. [Contact](#contact)
 
 ---
 
@@ -68,10 +66,6 @@ counter to the field's usual framing and is discussed at length in the
 paper itself. This repository contains everything needed to
 reproduce that finding from the raw dataset.
 
----
-
-## Research Contributions
-
 ### SHHCP, SHLCP, SHMCP, SHECP
 
 Four **S**ingle **H**euristic personalised active learning strategies,
@@ -85,61 +79,6 @@ user's latent preference vector:
 | **SHLCP** | Single Heuristic Lowest Confidence Prediction | Item the model is *least* confident about | Pure exploration |
 | **SHMCP** | Single Heuristic Median Confidence Prediction | Item closest to the median predicted score | Uncertainty sampling |
 | **SHECP** | Single Heuristic Epsilon-greedy Confidence Prediction | Explores (SHLCP rule) with probability `epsilon_r`, exploits (SHHCP rule) otherwise; `epsilon_r` decays each round toward a floor | Epsilon-greedy (reinforcement learning) |
-
-SHHCP tends to converge onto a narrow, already-well-understood slice
-of the item space as the session grows ("the exploitation trap");
-SHLCP is the most consistently accurate across elicitation budgets;
-SHECP is strongest at small budgets, where its early high exploration
-rate resembles SHLCP, before its accuracy converges toward SHHCP's as
-epsilon decays.
-
-### Incremental partial-SGD update
-
-The straightforward way to update a matrix-factorisation model after a
-cold user reveals a new interaction is to **retrain the entire model**
-on all warm-user data plus the new observation - correct, but far too
-slow to apply after every single interaction across a population of
-hundreds of thousands of cold users. This paper instead derives a
-**partial update**: only the cold user's own parameters and the
-revealed item's own vector/bias are adjusted via one step of gradient
-descent; every other user's and item's parameters are left untouched,
-since the observation carries no direct information about them. This
-reduces the per-interaction update cost from a full retrain (which
-scales with the entire warm-user dataset) to a small, constant number
-of arithmetic operations per latent factor - independent of dataset
-size. `scripts/model/personalised_strategies.py`'s
-docstrings give the full derivation and complexity argument; a
-measured (not just asymptotic) wall-clock comparison
-(`scripts/experiments/measure_update_cost.py`, ~6.5x10^6x speedup) is
-one of the paper's supporting results.
-
-### Confidence-weighted shrinkage
-
-RMSE penalises confident-but-wrong predictions harshly. A cold user's
-personalised estimate, built from only 10-100 revealed interactions,
-is inherently noisier than an item's own average interaction rate,
-which is estimated from the entire warm-user population. **Shrinkage**
-blends the two: the final prediction is a weighted mix of the
-personalised estimate and the stable item-level baseline, with the
-weight increasing as more evidence (a larger elicitation budget `k`)
-accumulates - an empirical-Bayes-style correction (Efron & Morris,
-1975) that is a direct response to this noise-versus-evidence
-trade-off, not merely a post-hoc rescaling.
-
-### Leakage-free evaluation
-
-If a cold user's own behaviour is allowed to influence which
-hyperparameters get selected for the *base* model (the one trained on
-warm users), the evaluation is contaminated: the model has effectively
-already "seen" information about the very users it will later be
-tested on. This repository's cross-validation protocol
-(`scripts/model/build_model_cache.py`) is run **exclusively on warm
-users**, so no cold-user information of any kind reaches model
-selection. Applying this fix retroactively is what first exposed the
-paper's headline finding (non-personalised baselines are far more
-competitive than previously reported) - the earlier, leakier
-evaluation had been silently flattering the personalised strategies by
-giving their comparison baseline an unfair advantage.
 
 ### Methodological contributions vs. engineering improvements
 
@@ -395,7 +334,7 @@ correct order automatically (skipping STEP 1 if
 python scripts/model/run_complete_pipeline.py    # ~2-2.5 hours total
 ```
 
-### The optional hyperparameter ablations (STEP 4)
+### STEP 4. The hyperparameter ablations (optional)
 
 Each is independent of the others and of STEPS 2/3/5/6 above (all read
 `results/base_model_cache.pkl` directly) - run any subset, in any
@@ -410,7 +349,7 @@ python scripts/experiments/shecp_grid_search.py           # ~2 hours
 python scripts/experiments/measure_update_cost.py         # ~1 min   
 ```
 
-### Figures (STEP 7, optional)
+### STEP 7. Figures (optional)
 
 Run after the results CSVs they read from already exist:
 
@@ -421,87 +360,6 @@ python scripts/plotting/make_shecp_grid_figure.py     # needs shecp_grid_search.
 
 ---
 
-## Methodology
-
-### Biased SVD
-
-The base recommender is a biased Singular Value Decomposition model
-(as implemented in the [Surprise](http://surpriselib.com/) library),
-predicting an interaction score as:
-
-```
-a_hat(u, i) = mu + b_u + b_i + p_u . q_i
-```
-
-where `mu` is the global mean interaction rate, `b_u`/`b_i` are
-user/item bias terms, and `p_u`/`q_i` are the user's/item's latent
-factor vectors. Trained **once**, on warm-user data only, via
-leakage-free cross-validated hyperparameter search
-(`scripts/model/build_model_cache.py`); frozen for the remainder of
-every experiment.
-
-### Partial SGD (incremental update)
-
-For a cold user, only `p_u^c` (initialised at the first shown item's
-own vector, not zero) and `b_u^c` (initialised to 0) are trainable;
-the base model's `q_i`/`b_i` for every item stay frozen, except for a
-**per-user local copy** that is updated only for items that specific
-cold user has actually been shown (so one cold user's updates never
-leak into another's evaluation). After each revealed interaction
-`(u, i, r_ui)`, one step of gradient descent updates the four
-quantities directly involved:
-
-```
-e_ui = r_ui - a_hat(u, i)
-b_u^c <- b_u^c + gamma_1 (e_ui - lambda_1 b_u^c)
-b_i   <- b_i   + gamma_1 (e_ui - lambda_1 b_i)
-p_u^c <- p_u^c + gamma_2 (e_ui q_i - lambda_2 p_u^c)
-q_i   <- q_i   + gamma_2 (e_ui p_u^c - lambda_2 q_i)
-```
-
-A **decaying learning rate**, `gamma_eff(t) = gamma_0 / sqrt(1+t)`
-(`t` = number of prior updates this session), is applied on top of
-this base update - confirmed to improve validation RMSE in
-`scripts/experiments/decaying_lr_test.py` (Robbins & Monro, 1951:
-decreasing step sizes are a classical requirement for stochastic
-approximation to converge rather than oscillate).
-
-### Active learning (item selection)
-
-At each step, the next batch of `B` items is chosen according to the
-active strategy (SHHCP/SHLCP/SHMCP/SHECP - see
-[Research Contributions](#research-contributions)), using the *raw*
-(non-shrunk) predicted score. See
-`scripts/model/personalised_strategies.py`'s `_select_batch_vectorised`
-(or the ablation scripts' simpler dict-based equivalents) for the
-exact selection rule per strategy.
-
-### Confidence-weighted shrinkage
-
-At **evaluation** time only (never during item selection), the final
-prediction blends the personalised term toward the stable baseline:
-
-```
-a_hat_shrunk(u, i) = mu + b_i + alpha(k) * (b_u^c + p_u^c . q_i),
-    alpha(k) = k / (k + c)
-```
-
-where `k` is the total number of items revealed so far this session
-and `c` is a tuned constant (`scripts/experiments/shrinkage_test.py`).
-
-### Ranking evaluation: RMSE, HR@K, NDCG@K
-
-- **RMSE** is computed on each cold user's held-out test split (the
-  50% of their remaining unseen items not used for validation).
-- **HR@K** and **NDCG@K** follow the sampled-candidate methodology of
-  He et al. (2017): each held-out positive item is ranked against 99
-  sampled negatives (`N_NEG` in the scripts), rather than the full
-  item catalogue - standard Recall@K is otherwise trivially inflated
-  to near-unity on this dataset's sparsity and cannot distinguish
-  between strategies. `HR@K = 1[rank(i+) <= K]`;
-  `NDCG@K = HR@K / log2(rank(i+) + 1)`.
-
----
 
 ## Reproducibility
 
