@@ -188,11 +188,7 @@ by a particular run, load `results/base_model_cache.pkl` and read its
 `cold_users` key (see [Reproducibility](#reproducibility) for what
 else is inside that file).
 
-### Expected files before running anything
-
-| Path | Required before running |
-|---|---|
-| `data/useritemmatrix.csv` | Everything (this is the only required input file) |
+#### Expected files before running anything: `data/useritemmatrix.csv`
 
 ---
 
