@@ -17,13 +17,12 @@ dr. Flavius Frasincar).
 4. [Installation](#installation)
 5. [Dataset](#dataset)
 6. [Running Experiments](#running-experiments)
-7. [Reproducing paper Results](#reproducing-paper-results)
+7. [Reproducing Paper Results](#reproducing-paper-results)
 8. [Methodology](#methodology)
-9. [Configuration](#configuration)
-10. [Reproducibility](#reproducibility)
-11. [Citation](#citation)
-12. [License](#license)
-13. [Contact](#contact)
+9. [Reproducibility](#reproducibility)
+10. [Citation](#citation)
+11. [License](#license)
+12. [Contact](#contact)
 
 ---
 
@@ -92,15 +91,13 @@ of the item space as the session grows ("the exploitation trap");
 SHLCP is the most consistently accurate across elicitation budgets;
 SHECP is strongest at small budgets, where its early high exploration
 rate resembles SHLCP, before its accuracy converges toward SHHCP's as
-epsilon decays. See `scripts/model/personalised_strategies.py` for the
-exact selection-rule implementation and the paper's Chapter 4 for the
-full empirical comparison.
+epsilon decays.
 
 ### Incremental partial-SGD update
 
 The straightforward way to update a matrix-factorisation model after a
 cold user reveals a new interaction is to **retrain the entire model**
-on all warm-user data plus the new observation -- correct, but far too
+on all warm-user data plus the new observation - correct, but far too
 slow to apply after every single interaction across a population of
 hundreds of thousands of cold users. This paper instead derives a
 **partial update**: only the cold user's own parameters and the
@@ -109,7 +106,7 @@ descent; every other user's and item's parameters are left untouched,
 since the observation carries no direct information about them. This
 reduces the per-interaction update cost from a full retrain (which
 scales with the entire warm-user dataset) to a small, constant number
-of arithmetic operations per latent factor -- independent of dataset
+of arithmetic operations per latent factor - independent of dataset
 size. `scripts/model/personalised_strategies.py`'s
 docstrings give the full derivation and complexity argument; a
 measured (not just asymptotic) wall-clock comparison
@@ -164,7 +161,7 @@ not themselves a claim):
 ## Repository Structure
 
 ```
-Single Heuristic Personalized (SHP)/
+SHP/
 ├── README.md               <- this file
 ├── LICENSE                 <- MIT (code only - see LICENSE for the dataset note)
 ├── requirements.txt        <- pinned package versions (pip)
@@ -258,8 +255,7 @@ The dataset records binary implicit feedback (purchase and retained =
 1; returned or not purchased = 0) from real customer transactions at
 de Bijenkorf, a Dutch premium department store, first used in this
 line of research by Geurts et al. (2020). It is provided in this
-repository as `data/useritemmatrix.csv` - no separate download step
-is required.
+repository as `data/useritemmatrix.csv`.
 
 **Format**: a CSV with columns `userId`, `itemId`, `interaction`
 (0 or 1). One row per observed (user, item) interaction.
@@ -308,11 +304,10 @@ scripts in this repository - see [Running Experiments](#running-experiments).
 **Every script in this repository is run from the repository root**
 (this folder), so that its relative paths to `data/`, `results/`, and
 `figures/` resolve correctly. If cloned into a directory whose name
-contains spaces (e.g. the default `Single Heuristic Personalized
-(SHP)`), quote the path when changing into it:
+contains spaces (e.g. the default `SHP`), quote the path when changing into it:
 
 ```bash
-cd "Single Heuristic Personalized (SHP)"
+cd "SHP"
 python scripts/model/build_model_cache.py     # NOT: cd scripts/model && python build_model_cache.py
 ```
 
@@ -505,41 +500,6 @@ and `c` is a tuned constant (`scripts/experiments/shrinkage_test.py`).
   to near-unity on this dataset's sparsity and cannot distinguish
   between strategies. `HR@K = 1[rank(i+) <= K]`;
   `NDCG@K = HR@K / log2(rank(i+) + 1)`.
-
----
-
-## Configuration
-
-Every hyperparameter below is a module-level constant in the script
-named in its "Where tuned" column below -- base-model hyperparameters
-(`n_factors`, `reg_all`, `n_epochs`, `ALPHA`, `COLD_USER_FRACTION`,
-`MIN_ITEM_INTERACTIONS`) live in `scripts/model/build_model_cache.py`;
-cold-side/personalisation hyperparameters (`GAMMA1`, `GAMMA2`,
-`LMBDA1`, `LMBDA2`, `NUM_SGD_STEPS`, `BATCH_SIZE`, `SHECP_FLOOR`,
-`SHECP_DECAY`, `USE_DECAYING_LR`, `SHRINKAGE_C`, `N_NEG`) live in
-`scripts/model/personalised_strategies.py`; and any value that was
-swept in an ablation is mirrored as its own module-level constant in
-the corresponding script under `scripts/experiments/`. Change the
-constant, not the code that uses it.
-
-| Hyperparameter | Value | Where tuned | Meaning |
-|---|---|---|---|
-| `n_factors` (latent dimension `F`) | 50 | `build_model_cache.py`, GridSearchCV | Number of latent factors in the base SVD |
-| `reg_all` | 1e-4 | `build_model_cache.py`, GridSearchCV | Base-model L2 regularisation |
-| `n_epochs` (base model) | 50 | fixed, following Geurts et al. (2020) | Base SVD training epochs |
-| `ALPHA` (PopError mixing coefficient) | 0.7 | `build_model_cache.py`, HR@10 search | Popularity vs. ambiguity weight in PopError's score |
-| `GAMMA1`, `GAMMA2` (learning rates) | 0.005, 0.005 | fixed, standard biased-SVD range | Bias / factor-vector update step size |
-| `LMBDA1`, `LMBDA2` (regularisation) | 1e-7, 1e-6 | `regularization_ablation.py` (lambda2 swept; lambda1 held fixed) | Bias / factor-vector L2 penalty in the incremental update |
-| `NUM_SGD_STEPS` | 1 | fixed, per the 's original ablation (not re-derived by any script in this repository; more steps overfit each noisy interaction) | Partial-SGD steps per revealed interaction |
-| `BATCH_SIZE` (`B`) | 3 | `b_ablation.py` | Items revealed per active-learning round |
-| `SHECP_FLOOR` | 0.05 | `shecp_grid_search.py`, validated on the full 1,000-user population | SHECP's minimum exploration probability |
-| `SHECP_DECAY` | 0.95 | `shecp_grid_search.py` | SHECP's exploration-probability decay rate per round |
-| `USE_DECAYING_LR` | True | `decaying_lr_test.py` | Whether the incremental update uses the decaying-LR schedule |
-| `SHRINKAGE_C` | 100 | `shrinkage_test.py` | Confidence-weighted shrinkage constant |
-| `COLD_USER_FRACTION` | 0.25 | fixed, following Geurts et al. (2020); not itself varied | Fraction of users withheld as cold |
-| `MIN_ITEM_INTERACTIONS` | 10 | fixed | Minimum warm-user interactions for item eligibility |
-| `N_NEG` | 99 | fixed, following He et al. (2017) | Sampled negatives per positive item in HR@K/NDCG@K |
-| `NUM_EVAL_USERS` | 1000 | fixed | Cold users evaluated in the full-scale run |
 
 ---
 
