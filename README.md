@@ -1,6 +1,6 @@
 # Confidence-Based Active Learning Strategies for the Cold User Problem in Recommender Systems
 
-Code and data accompanying the MSc thesis *"Confidence-Based Active
+Code and data accompanying the MSc paper *"Confidence-Based Active
 Learning Strategies for Addressing the Cold User Problem in
 Recommender Systems Using Personalised Matrix Factorisation"*
 (Ying Ying Tsai, MSc Data Science and Marketing Analytics, Erasmus
@@ -17,7 +17,7 @@ dr. Flavius Frasincar).
 4. [Installation](#installation)
 5. [Dataset](#dataset)
 6. [Running Experiments](#running-experiments)
-7. [Reproducing Thesis Results](#reproducing-thesis-results)
+7. [Reproducing paper Results](#reproducing-paper-results)
 8. [Methodology](#methodology)
 9. [Configuration](#configuration)
 10. [Reproducibility](#reproducibility)
@@ -54,21 +54,20 @@ the session unfolds.
 
 ### The contribution
 
-This thesis proposes and evaluates a family of four confidence-based
+This paper proposes and evaluates a family of four confidence-based
 personalised active learning strategies (SHHCP, SHLCP, SHMCP, SHECP;
 see [Research Contributions](#research-contributions)), an
 **incremental partial-SGD update** that makes personalised item
 selection computationally feasible at the scale of a full user
 population, and a **leakage-free evaluation protocol** that closes a
 subtle methodological gap in how this class of methods has previously
-been assessed. Under this corrected, fair evaluation, the thesis's
+been assessed. Under this corrected, fair evaluation, the paper's
 central finding is that non-personalised, item-level baselines remain
 highly competitive on prediction accuracy (RMSE) against personalised
 selection in this dataset's sparsity regime - a result that runs
 counter to the field's usual framing and is discussed at length in the
-thesis itself. This repository contains everything needed to
-reproduce that finding, and every other number and figure in the
-thesis, from the raw dataset.
+paper itself. This repository contains everything needed to
+reproduce that finding from the raw dataset.
 
 ---
 
@@ -94,7 +93,7 @@ SHLCP is the most consistently accurate across elicitation budgets;
 SHECP is strongest at small budgets, where its early high exploration
 rate resembles SHLCP, before its accuracy converges toward SHHCP's as
 epsilon decays. See `scripts/model/personalised_strategies.py` for the
-exact selection-rule implementation and the thesis's Chapter 4 for the
+exact selection-rule implementation and the paper's Chapter 4 for the
 full empirical comparison.
 
 ### Incremental partial-SGD update
@@ -103,7 +102,7 @@ The straightforward way to update a matrix-factorisation model after a
 cold user reveals a new interaction is to **retrain the entire model**
 on all warm-user data plus the new observation -- correct, but far too
 slow to apply after every single interaction across a population of
-hundreds of thousands of cold users. This thesis instead derives a
+hundreds of thousands of cold users. This paper instead derives a
 **partial update**: only the cold user's own parameters and the
 revealed item's own vector/bias are adjusted via one step of gradient
 descent; every other user's and item's parameters are left untouched,
@@ -115,7 +114,7 @@ size. `scripts/model/personalised_strategies.py`'s
 docstrings give the full derivation and complexity argument; a
 measured (not just asymptotic) wall-clock comparison
 (`scripts/experiments/measure_update_cost.py`, ~6.5x10^6x speedup) is
-one of the thesis's supporting results.
+one of the paper's supporting results.
 
 ### Confidence-weighted shrinkage
 
@@ -126,7 +125,7 @@ which is estimated from the entire warm-user population. **Shrinkage**
 blends the two: the final prediction is a weighted mix of the
 personalised estimate and the stable item-level baseline, with the
 weight increasing as more evidence (a larger elicitation budget `k`)
-accumulates -- an empirical-Bayes-style correction (Efron & Morris,
+accumulates - an empirical-Bayes-style correction (Efron & Morris,
 1975) that is a direct response to this noise-versus-evidence
 trade-off, not merely a post-hoc rescaling.
 
@@ -140,15 +139,15 @@ tested on. This repository's cross-validation protocol
 (`scripts/model/build_model_cache.py`) is run **exclusively on warm
 users**, so no cold-user information of any kind reaches model
 selection. Applying this fix retroactively is what first exposed the
-thesis's headline finding (non-personalised baselines are far more
-competitive than previously reported) -- the earlier, leakier
+paper's headline finding (non-personalised baselines are far more
+competitive than previously reported) - the earlier, leakier
 evaluation had been silently flattering the personalised strategies by
 giving their comparison baseline an unfair advantage.
 
 ### Methodological contributions vs. engineering improvements
 
 To be explicit about which parts of this repository are *research
-contributions* (novel methodological ideas evaluated in the thesis)
+contributions* (novel methodological ideas evaluated in the paper)
 versus *engineering work* (needed to make those ideas practical, but
 not themselves a claim):
 
@@ -167,7 +166,7 @@ not themselves a claim):
 ```
 Single Heuristic Personalized (SHP)/
 ├── README.md               <- this file
-├── LICENSE                 <- MIT (code only -- see LICENSE for the dataset note)
+├── LICENSE                 <- MIT (code only - see LICENSE for the dataset note)
 ├── requirements.txt        <- pinned package versions (pip)
 ├── environment.yml         <- equivalent conda environment
 ├── .gitignore
@@ -176,7 +175,7 @@ Single Heuristic Personalized (SHP)/
 │   └── useritemmatrix.csv  <- the raw dataset (see "Dataset" below)
 │
 ├── results/                <- generated by running the scripts; empty at checkout
-│   └── (base_model_cache.pkl, *.csv -- see "Running Experiments")
+│   └── (base_model_cache.pkl, *.csv - see "Running Experiments")
 │
 ├── figures/                <- generated by the plotting scripts; empty at checkout
 │   └── (*.png, *.pdf)
@@ -203,11 +202,11 @@ Single Heuristic Personalized (SHP)/
         └── make_shecp_grid_figure.py    <- SHECP floor/decay heatmap
 ```
 
-**Why this split?** `model/` is the actual recommender system --
-everything needed to produce the thesis's headline results (Chapter 4)
+**Why this split?** `model/` is the actual recommender system -
+everything needed to produce the 's headline results (Chapter 4)
 starting from raw data. `experiments/` contains the supporting
 hyperparameter studies and statistical tests that justify the choices
-made in `model/` (Chapter 3's tables) -- these are not needed to
+made in `model/` - these are not needed to
 reproduce the headline results themselves, only to reproduce *why*
 those particular hyperparameters were chosen. `plotting/` only ever
 reads already-computed CSVs from `results/`; it never runs the model.
@@ -221,7 +220,7 @@ reads already-computed CSVs from `results/`; it never runs the model.
 - **Python 3.11** (the exact version this code was developed and
   tested against; see [Reproducibility](#reproducibility))
 - A C compiler (needed to build `scikit-surprise`, which compiles a
-  Cython extension on install) -- on macOS, install Xcode Command Line
+  Cython extension on install) - on macOS, install Xcode Command Line
   Tools (`xcode-select --install`); on Ubuntu/Debian,
   `sudo apt install build-essential`; on Windows, install the
   "Desktop development with C++" workload from Visual Studio Build
@@ -259,7 +258,7 @@ The dataset records binary implicit feedback (purchase and retained =
 1; returned or not purchased = 0) from real customer transactions at
 de Bijenkorf, a Dutch premium department store, first used in this
 line of research by Geurts et al. (2020). It is provided in this
-repository as `data/useritemmatrix.csv` -- no separate download step
+repository as `data/useritemmatrix.csv` - no separate download step
 is required.
 
 **Format**: a CSV with columns `userId`, `itemId`, `interaction`
@@ -287,7 +286,7 @@ is no separate preprocessing script to run first. In order, it:
 
 The split is regenerated fresh every time `build_model_cache.py` runs,
 using a fixed random seed (`np.random.RandomState(1)`), so it is
-identical across runs on the same data file -- there is no separate
+identical across runs on the same data file - there is no separate
 "split file" to manage. If you need the *exact* set of cold users used
 by a particular run, load `results/base_model_cache.pkl` and read its
 `cold_users` key (see [Reproducibility](#reproducibility) for what
@@ -300,7 +299,7 @@ else is inside that file).
 | `data/useritemmatrix.csv` | Everything (this is the only required input file) |
 
 Every other file under `results/` and `figures/` is generated by the
-scripts in this repository -- see [Running Experiments](#running-experiments).
+scripts in this repository - see [Running Experiments](#running-experiments).
 
 ---
 
@@ -317,7 +316,7 @@ cd "Single Heuristic Personalized (SHP)"
 python scripts/model/build_model_cache.py     # NOT: cd scripts/model && python build_model_cache.py
 ```
 
-### The order matters -- what depends on what
+### The order matters - what depends on what
 
 ```
 STEP 1  build_model_cache.py
@@ -358,36 +357,35 @@ specific numbers.
 ### Exact commands, in the order you would actually run them
 
 ```bash
-# STEP 1 -- one-time setup: trains the base SVD model, tunes ALPHA and
+# STEP 1 - one-time setup: trains the base SVD model, tunes ALPHA and
 # (n_factors, reg_all, epochs). ~20-25 minutes. Writes
 # results/base_model_cache.pkl, which every later step loads instead
 # of redoing this setup.
 python scripts/model/build_model_cache.py
 
-# STEP 2 -- non-personalised baselines (Random, Popularity, PopError):
+# STEP 2 - non-personalised baselines (Random, Popularity, PopError):
 # RMSE + HR@K/NDCG@K on 1,000 cold users. ~8 minutes. Writes
-# results/baseline_results.csv (thesis Table 4.1).
+# results/baseline_results.csv 
 python scripts/model/baseline_ranking_metrics.py
 
-# STEP 3 -- the four personalised strategies, full scale. Running the
+# STEP 3 - the four personalised strategies, full scale. Running the
 # file directly only executes a 20-user smoke test (a quick
 # correctness check); the full 1,000-user x 4-strategy x 4-k
 # evaluation is only triggered via run_complete_pipeline.py (below) or
 # by importing this module's run() function yourself. ~80-85 minutes
-# for the full run. Writes results/personalised_results.csv (thesis
-# Table 4.2, Table 4.3).
+# for the full run. Writes results/personalised_results.csv
 python scripts/model/personalised_strategies.py        # smoke test only
 python scripts/model/run_complete_pipeline.py           # full pipeline: see below
 
-# STEP 5 -- paired Wilcoxon significance tests, personalised vs. each
+# STEP 5 - paired Wilcoxon significance tests, personalised vs. each
 # baseline (48 tests). Needs STEP 3's output. ~16 minutes. Writes
 # results/significance_results.csv.
 python scripts/experiments/significance_test.py
 
-# STEP 6 -- NDCG@10 significance test + Holm-Bonferroni/Benjamini-
+# STEP 6 - NDCG@10 significance test + Holm-Bonferroni/Benjamini-
 # Hochberg multiple-comparisons correction. Needs STEP 5's output.
 # ~16 minutes. Writes results/ranking_significance_results.csv and
-# results/significance_results_corrected.csv (thesis Section 4.4).
+# results/significance_results_corrected.csv
 python scripts/experiments/ranking_significance_and_correction.py
 ```
 
@@ -404,18 +402,17 @@ python scripts/model/run_complete_pipeline.py    # ~2-2.5 hours total
 
 ### The optional hyperparameter ablations (STEP 4)
 
-These reproduce Chapter 3's hyperparameter-selection tables. Each is
-independent of the others and of STEPS 2/3/5/6 above (all read
-`results/base_model_cache.pkl` directly) -- run any subset, in any
+Each is independent of the others and of STEPS 2/3/5/6 above (all read
+`results/base_model_cache.pkl` directly) - run any subset, in any
 order:
 
 ```bash
-python scripts/experiments/decaying_lr_test.py           # ~5 min   -- thesis Table 3.3
-python scripts/experiments/shrinkage_test.py              # ~5 min   -- thesis Table 3.4
-python scripts/experiments/b_ablation.py                  # ~10 min  -- Chapter 5, Limitation 6
-python scripts/experiments/regularization_ablation.py     # ~5 min   -- Chapter 5, Limitation 6
-python scripts/experiments/shecp_grid_search.py           # ~2 hours -- thesis Table 3.8 (full 1,000-user population; the only ablation run at full scale rather than the 200-user tuning subset)
-python scripts/experiments/measure_update_cost.py         # ~1 min   -- thesis Section 3.7.1 (measured, not just asymptotic, full-retrain-vs-partial-update speedup)
+python scripts/experiments/decaying_lr_test.py           # ~5 min   
+python scripts/experiments/shrinkage_test.py              # ~5 min   
+python scripts/experiments/b_ablation.py                  # ~10 min  
+python scripts/experiments/regularization_ablation.py     # ~5 min   
+python scripts/experiments/shecp_grid_search.py           # ~2 hours 
+python scripts/experiments/measure_update_cost.py         # ~1 min   
 ```
 
 ### Figures (STEP 7, optional)
@@ -426,56 +423,6 @@ Run after the results CSVs they read from already exist:
 python scripts/plotting/make_thesis_figures.py       # needs STEPS 2+3's output
 python scripts/plotting/make_shecp_grid_figure.py     # needs shecp_grid_search.py's output (STEP 4)
 ```
-
----
-
-## Reproducing Thesis Results
-
-Every table and figure below is traceable to one exact script and one
-exact output file, so a number in the thesis can always be checked
-against a specific, re-runnable computation.
-
-### Chapter 3 -- Methodology
-
-| Thesis item | Script | Output file |
-|---|---|---|
-| Table 3.1 (dataset characteristics) | `scripts/model/build_model_cache.py` | printed to stdout during STEP 1 |
-| Table 3.2 (notation) | -- (not a computed result) | -- |
-| Table 3.3 (constant vs. decaying LR) | `scripts/experiments/decaying_lr_test.py` | `results/decaying_lr_test_results.csv` |
-| Table 3.4 (shrinkage constant c search) | `scripts/experiments/shrinkage_test.py` | `results/shrinkage_test_results.csv` |
-| Table 3.5 (PopError alpha search) | `scripts/model/build_model_cache.py` | printed to stdout (ALPHA line) |
-| Table 3.6 (warm-user CV grid) | `scripts/model/build_model_cache.py` | printed to stdout (GridSearchCV line); full grid in `results/base_model_cache.pkl`'s `best_params` |
-| Table 3.7 (SGD-steps ablation) | *(fixed at 1 in this repository; see* `NUM_SGD_STEPS` *in* `scripts/model/personalised_strategies.py`*. This value comes from the thesis's original ablation and is not re-derived by any script in this repository --* `decaying_lr_test.py` *always applies a single SGD step and does not vary this parameter.)* | -- |
-| Table 3.8 (SHECP floor/decay grid) | `scripts/experiments/shecp_grid_search.py` | `results/shecp_grid_results.csv`; figure via `scripts/plotting/make_shecp_grid_figure.py` -> `figures/fig_shecp_grid.{png,pdf}` |
-| Section 3.7.1 (measured partial-update speedup, ~6.5x10^6x) | `scripts/experiments/measure_update_cost.py` | `results/update_cost_results.txt` |
-| Chapter 5, Limitation 6 (batch size B, regularisation lambda2) | `scripts/experiments/b_ablation.py`, `scripts/experiments/regularization_ablation.py` | `results/b_ablation_results.csv`, `results/regularization_ablation_results.csv` |
-
-### Chapter 4 -- Preliminary Results
-
-| Thesis item | Script | Output file |
-|---|---|---|
-| Table 4.1 (non-personalised baseline RMSE) | `scripts/model/baseline_ranking_metrics.py` | `results/baseline_results.csv` |
-| Table 4.2 (personalised strategy RMSE) | `scripts/model/personalised_strategies.py` (full run, via `run_complete_pipeline.py`) | `results/personalised_results.csv` (`rmse` column, grouped by strategy/k) |
-| Table 4.3 (HR@K/NDCG@K for personalised strategies) | same | `results/personalised_results.csv` (`hr5`, `hr10`, `ndcg5`, `ndcg10` columns) |
-| Table 4.4 (best personalised vs. best baseline) | derived from Tables 4.1 + 4.2 | -- (no separate file; compare the two CSVs directly) |
-| Figure 4.1 (RMSE vs. baseline range) | `scripts/plotting/make_thesis_figures.py` | `figures/fig_rmse_vs_baselines.{png,pdf}` |
-| Figure 4.2 (HR@10/NDCG@10 vs. best baseline) | `scripts/plotting/make_thesis_figures.py` | `figures/fig_ranking_metrics.{png,pdf}` |
-| Section 4.4 significance testing (raw 33/7/8 split) | `scripts/experiments/significance_test.py` | `results/significance_results.csv` |
-| Section 4.4 Holm-corrected significance (28/48; 27 baseline-favouring, 1 personalised-favouring) | `scripts/experiments/ranking_significance_and_correction.py` | `results/significance_results_corrected.csv` |
-| Section 4.4 NDCG@10 significance (23/48 Holm-significant, all baseline-favouring) | `scripts/experiments/ranking_significance_and_correction.py` | `results/ranking_significance_results.csv` |
-
-### Sign convention note (important when reading the significance CSVs)
-
-`rmse_margin` in `significance_results.csv` is defined as
-`mean_rmse_baseline - mean_rmse_personalised`: since RMSE is
-lower-is-better, a **positive** margin means the personalised strategy
-is more accurate. `ndcg10_margin` in
-`ranking_significance_results.csv` is defined as
-`mean_ndcg10_baseline - mean_ndcg10_personalised`: since NDCG is
-higher-is-better, a **positive** margin here means the *baseline* is
-more accurate -- the opposite convention from the RMSE margin. Both
-scripts' docstrings state this explicitly; double-check which metric
-you are reading before interpreting a margin's sign.
 
 ---
 
@@ -519,7 +466,7 @@ q_i   <- q_i   + gamma_2 (e_ui p_u^c - lambda_2 q_i)
 
 A **decaying learning rate**, `gamma_eff(t) = gamma_0 / sqrt(1+t)`
 (`t` = number of prior updates this session), is applied on top of
-this base update -- confirmed to improve validation RMSE in
+this base update - confirmed to improve validation RMSE in
 `scripts/experiments/decaying_lr_test.py` (Robbins & Monro, 1951:
 decreasing step sizes are a classical requirement for stochastic
 approximation to converge rather than oscillate).
@@ -527,7 +474,7 @@ approximation to converge rather than oscillate).
 ### Active learning (item selection)
 
 At each step, the next batch of `B` items is chosen according to the
-active strategy (SHHCP/SHLCP/SHMCP/SHECP -- see
+active strategy (SHHCP/SHLCP/SHMCP/SHECP - see
 [Research Contributions](#research-contributions)), using the *raw*
 (non-shrunk) predicted score. See
 `scripts/model/personalised_strategies.py`'s `_select_batch_vectorised`
@@ -554,7 +501,7 @@ and `c` is a tuned constant (`scripts/experiments/shrinkage_test.py`).
 - **HR@K** and **NDCG@K** follow the sampled-candidate methodology of
   He et al. (2017): each held-out positive item is ranked against 99
   sampled negatives (`N_NEG` in the scripts), rather than the full
-  item catalogue -- standard Recall@K is otherwise trivially inflated
+  item catalogue - standard Recall@K is otherwise trivially inflated
   to near-unity on this dataset's sparsity and cannot distinguish
   between strategies. `HR@K = 1[rank(i+) <= K]`;
   `NDCG@K = HR@K / log2(rank(i+) + 1)`.
@@ -583,7 +530,7 @@ constant, not the code that uses it.
 | `ALPHA` (PopError mixing coefficient) | 0.7 | `build_model_cache.py`, HR@10 search | Popularity vs. ambiguity weight in PopError's score |
 | `GAMMA1`, `GAMMA2` (learning rates) | 0.005, 0.005 | fixed, standard biased-SVD range | Bias / factor-vector update step size |
 | `LMBDA1`, `LMBDA2` (regularisation) | 1e-7, 1e-6 | `regularization_ablation.py` (lambda2 swept; lambda1 held fixed) | Bias / factor-vector L2 penalty in the incremental update |
-| `NUM_SGD_STEPS` | 1 | fixed, per the thesis's original ablation (not re-derived by any script in this repository; more steps overfit each noisy interaction) | Partial-SGD steps per revealed interaction |
+| `NUM_SGD_STEPS` | 1 | fixed, per the 's original ablation (not re-derived by any script in this repository; more steps overfit each noisy interaction) | Partial-SGD steps per revealed interaction |
 | `BATCH_SIZE` (`B`) | 3 | `b_ablation.py` | Items revealed per active-learning round |
 | `SHECP_FLOOR` | 0.05 | `shecp_grid_search.py`, validated on the full 1,000-user population | SHECP's minimum exploration probability |
 | `SHECP_DECAY` | 0.95 | `shecp_grid_search.py` | SHECP's exploration-probability decay rate per round |
@@ -610,7 +557,7 @@ seeded:
   cross-validation order).
 - **Validation/test item splits, per-work-item epsilon-greedy and
   negative-sampling draws**: derived from `_stable_seed(u, shown)`, a
-  `hashlib.md5`-based deterministic seed -- used in place of Python's
+  `hashlib.md5`-based deterministic seed - used in place of Python's
   built-in `hash()`, which is randomised per-process
   (`PYTHONHASHSEED`) unless explicitly fixed, and would otherwise make
   every split non-reproducible both across separate runs *and* across
@@ -618,13 +565,13 @@ seeded:
 - **SHECP grid search's epsilon-greedy draws**: a single
   `np.random.RandomState(123)` stream, deliberately *not*
   re-seeded per user, and the grid search itself deliberately *not*
-  parallelised -- so the sequence of draws (and therefore the result)
+  parallelised - so the sequence of draws (and therefore the result)
   cannot depend on how many workers are used.
 
 Re-running any script in this repository, on the same machine/library
 versions, reproduces its output exactly.
 
-### Software versions used to produce the thesis's results
+### Software versions used to produce the 's results
 
 | Package | Version |
 |---|---|
@@ -653,7 +600,7 @@ multiprocessing (`multiprocessing.Pool`, `spawn` start method, one
 worker process per requested core). Every other script in this
 repository is single-process. `scripts/experiments/shecp_grid_search.py`
 is deliberately sequential even though it runs on the full 1,000-user
-population -- see [Random seeds](#random-seeds) above for why.
+population - see [Random seeds](#random-seeds) above for why.
 
 ### Measured runtimes (this hardware; scale accordingly on other machines)
 
@@ -674,21 +621,6 @@ population -- see [Random seeds](#random-seeds) above for why.
 ---
 
 ## Citation
-
-If you use this code or dataset in your own research, please cite:
-
-```bibtex
-@mastersthesis{tsai2026coldstart,
-  author = {Tsai, Ying Ying},
-  title  = {Confidence-Based Active Learning Strategies for Addressing
-            the Cold User Problem in Recommender Systems Using
-            Personalised Matrix Factorisation},
-  school = {Erasmus University Rotterdam},
-  year   = {2026},
-  type   = {Master's thesis},
-  note   = {Supervisor: F. Frasincar}
-}
-```
 
 This work builds directly on:
 
@@ -741,7 +673,7 @@ This work builds directly on:
 ## License
 
 The source code in this repository is released under the **MIT
-License** -- see [LICENSE](LICENSE). MIT was chosen as a permissive,
+License** - see [LICENSE](LICENSE). MIT was chosen as a permissive,
 widely-recognised license that places minimal restrictions on reuse,
 appropriate for academic research code intended to support
 reproducibility.
