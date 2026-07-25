@@ -206,25 +206,21 @@ STEP 1  build_model_cache.py
 STEP 2     STEP 3                                 STEP 4 (optional)
 baseline_  personalised_                          the five ablations in
 ranking_   strategies.py                          scripts/experiments/
-metrics.py                                         (decaying_lr_test.py,
-   │       │                                        shrinkage_test.py,
-   │       │  (writes results/                      b_ablation.py,
-   │       │   personalised_results.csv)             regularization_
-   │       │                                         ablation.py,
-   │       ▼                                         shecp_grid_search.py)
-   │    STEP 5  significance_test.py                (each independent;
-   │       │    (needs results/personalised_         run any subset,
-   │       │     results.csv from STEP 3)             any order)
+metrics.py                                        
+   │       │                                       
+   │       │  (writes results/                     
+   │       │   personalised_results.csv)            
+   │       │                                        
+   │       ▼                                         
+   │    STEP 5  significance_test.py               
+   │       │           
+   │       │     
    │       ▼
    │    STEP 6  ranking_significance_and_correction.py
-   │            (needs results/significance_results.csv from STEP 5)
+   │            
    │
    └──────►  STEP 7 (optional)  scripts/plotting/*.py
-             (needs results/baseline_results.csv from STEP 2 and
-              results/personalised_results.csv from STEP 3;
-              make_shecp_grid_figure.py additionally needs
-              results/shecp_grid_results.csv from the STEP 4 ablation
-              of the same name)
+             
 ```
 
 In short: **STEP 1 must run before everything else. STEP 3 must run
@@ -269,28 +265,19 @@ python scripts/experiments/ranking_significance_and_correction.py
 
 ### The all-in-one command
 
-`run_complete_pipeline.py` runs STEPS 1-3, 5, and 6 above in the
-correct order automatically (skipping STEP 1 if
-`results/base_model_cache.pkl` already exists), including the full
-1,000-user STEP 3 evaluation (not just its smoke test):
-
 ```bash
 python scripts/model/run_complete_pipeline.py    # ~2-2.5 hours total
 ```
 
 ### STEP 4. The hyperparameter ablations (optional)
 
-Each is independent of the others and of STEPS 2/3/5/6 above (all read
-`results/base_model_cache.pkl` directly) - run any subset, in any
-order:
-
 ```bash
-python scripts/experiments/decaying_lr_test.py            # ~5 min   
-python scripts/experiments/shrinkage_test.py              # ~5 min   
-python scripts/experiments/b_ablation.py                  # ~10 min  
-python scripts/experiments/regularization_ablation.py     # ~5 min   
-python scripts/experiments/shecp_grid_search.py           # ~2 hours 
-python scripts/experiments/measure_update_cost.py         # ~1 min   
+python scripts/experiments/decaying_lr_test.py            
+python scripts/experiments/shrinkage_test.py              
+python scripts/experiments/b_ablation.py                  
+python scripts/experiments/regularization_ablation.py     
+python scripts/experiments/shecp_grid_search.py           
+python scripts/experiments/measure_update_cost.py         
 ```
 
 ### STEP 7. Figures (optional)
